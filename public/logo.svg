@@ -1,0 +1,24 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="96" height="96" viewBox="0 0 96 96" fill="none">
+  <defs>
+    <linearGradient id="bg" x1="8" y1="8" x2="88" y2="88" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#0b1020"/>
+      <stop offset="1" stop-color="#101826"/>
+    </linearGradient>
+    <linearGradient id="neon" x1="20" y1="20" x2="76" y2="76" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#00f5d4"/>
+      <stop offset="1" stop-color="#7c3aed"/>
+    </linearGradient>
+  </defs>
+  <rect x="8" y="8" width="80" height="80" rx="20" fill="url(#bg)"/>
+  <!-- Compass ring -->
+  <circle cx="48" cy="48" r="22" stroke="url(#neon)" stroke-width="4"/>
+  <circle cx="48" cy="48" r="2.5" fill="#00f5d4"/>
+  <!-- Compass needle -->
+  <path d="M48 32 L54 48 L48 64 L42 48 Z" fill="#00f5d4"/>
+  <!-- Lightning bolt -->
+  <path d="M60 28 L52 44 H58 L50 64 L66 42 H58 L66 28 Z" fill="#7c3aed"/>
+  <!-- Coin orbit -->
+  <ellipse cx="48" cy="48" rx="30" ry="12" stroke="#00f5d4" stroke-width="2" opacity="0.8"/>
+  <circle cx="22" cy="48" r="4" fill="#00f5d4"/>
+  <circle cx="74" cy="48" r="4" fill="#7c3aed"/>
+</svg>

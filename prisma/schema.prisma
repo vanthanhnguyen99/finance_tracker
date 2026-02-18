@@ -1,0 +1,113 @@
+generator client {
+  provider = "prisma-client-js"
+  binaryTargets = ["native", "debian-openssl-3.0.x"]
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+enum Currency {
+  DKK
+  VND
+}
+
+enum TransactionType {
+  INCOME
+  EXPENSE
+  EXCHANGE
+}
+
+enum UserStatus {
+  PENDING
+  ACTIVE
+  DISABLED
+  REJECTED
+}
+
+enum PasswordResetRequestStatus {
+  PENDING
+  APPROVED
+  REJECTED
+}
+
+model Wallet {
+  id        String     @id @default(uuid())
+  name      String
+  currency  Currency
+  createdAt DateTime   @default(now())
+  updatedAt DateTime   @updatedAt
+  transactions Transaction[]
+  fromExchanges Exchange[] @relation("ExchangeFrom")
+  toExchanges   Exchange[] @relation("ExchangeTo")
+
+  @@unique([currency])
+}
+
+model Transaction {
+  id        String          @id @default(uuid())
+  user      UserAllowlist?  @relation(fields: [userId], references: [id])
+  userId    String?
+  type      TransactionType
+  wallet    Wallet          @relation(fields: [walletId], references: [id])
+  walletId  String
+  amount    Int
+  currency  Currency
+  category  String?
+  note      String?
+  createdAt DateTime        @default(now())
+}
+
+model Exchange {
+  id            String   @id @default(uuid())
+  user          UserAllowlist? @relation(fields: [userId], references: [id])
+  userId        String?
+  fromWallet    Wallet   @relation("ExchangeFrom", fields: [fromWalletId], references: [id])
+  fromWalletId  String
+  toWallet      Wallet   @relation("ExchangeTo", fields: [toWalletId], references: [id])
+  toWalletId    String
+  fromAmountDkk Int
+  toAmountVnd   Int
+  effectiveRate Decimal  @db.Decimal(18, 6)
+  feeAmount     Int?
+  feeCurrency   Currency?
+  provider      String?
+  createdAt     DateTime @default(now())
+}
+
+model UserAllowlist {
+  id          String          @id @default(uuid())
+  displayName String
+  email       String?         @unique
+  passwordHash String?
+  note        String?
+  status      UserStatus      @default(PENDING)
+  createdAt   DateTime        @default(now())
+  updatedAt   DateTime        @updatedAt
+  transactions Transaction[]
+  exchanges   Exchange[]
+  sessions    Session[]
+  passwordResetRequests PasswordResetRequest[]
+}
+
+model Session {
+  id        String        @id @default(uuid())
+  user      UserAllowlist @relation(fields: [userId], references: [id])
+  userId    String
+  token     String        @unique
+  expiresAt DateTime
+  createdAt DateTime      @default(now())
+}
+
+model PasswordResetRequest {
+  id              String                     @id @default(uuid())
+  user            UserAllowlist              @relation(fields: [userId], references: [id])
+  userId          String
+  newPasswordHash String
+  status          PasswordResetRequestStatus @default(PENDING)
+  createdAt       DateTime                   @default(now())
+  reviewedAt      DateTime?
+
+  @@index([userId, status, createdAt])
+}

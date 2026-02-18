@@ -1,0 +1,2 @@
+ALTER TABLE "UserAllowlist"
+ALTER COLUMN "status" SET DEFAULT 'PENDING';

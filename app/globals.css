@@ -1,0 +1,111 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+:root {
+  color-scheme: light;
+}
+
+* {
+  -webkit-tap-highlight-color: transparent;
+}
+
+body {
+  @apply bg-[#f4f5fb] text-ink;
+  font-family: "Outfit", "Space Grotesk", system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+  min-height: 100dvh;
+  -webkit-text-size-adjust: 100%;
+}
+
+.container-page {
+  @apply mx-auto w-full max-w-6xl pb-28 pt-4;
+  padding-left: max(12px, env(safe-area-inset-left));
+  padding-right: max(12px, env(safe-area-inset-right));
+}
+
+.card {
+  @apply rounded-2xl bg-white p-4 shadow-card md:p-5;
+}
+
+.input {
+  @apply w-full rounded-xl border border-slate-200 bg-white px-3 py-3 text-base focus:border-[#7c3aed] focus:outline-none;
+}
+
+.select {
+  @apply w-full rounded-xl border border-slate-200 bg-white px-3 py-3 text-base;
+}
+
+.button {
+  @apply w-full rounded-xl bg-gradient-to-r from-[#6f3bf3] via-[#7c3aed] to-[#9333ea] px-4 py-3 text-base font-semibold text-white shadow-lg shadow-purple-300/30;
+}
+
+.alert {
+  @apply rounded-2xl border border-slate-200 px-4 py-3 text-sm shadow-card;
+}
+
+.badge {
+  @apply inline-flex items-center rounded-full bg-slate-100 px-3 py-1 text-xs font-semibold uppercase tracking-wide text-slate-600;
+}
+
+.navbar {
+  @apply fixed bottom-0 left-0 right-0 border-t border-slate-200 bg-white/95 backdrop-blur;
+  bottom: 0;
+  padding-bottom: max(env(safe-area-inset-bottom), 8px);
+}
+
+.bottom-nav-grid {
+  @apply grid grid-cols-3 items-end gap-2;
+}
+
+.bottom-nav-item {
+  @apply justify-self-center rounded-full px-4 py-3 text-center text-base;
+}
+
+.bottom-nav-item-active {
+  @apply bg-ink text-white;
+}
+
+.bottom-nav-item-idle {
+  @apply text-slate-500;
+}
+
+.bottom-nav-add {
+  @apply relative flex flex-col items-center gap-1 justify-self-center px-2 pb-2;
+}
+
+.bottom-nav-add-orb {
+  @apply -mt-8 inline-flex h-16 w-16 items-center justify-center rounded-full border-2 border-white bg-gradient-to-b from-[#9c6bff] to-[#6f3bf3] text-4xl font-light leading-none text-white shadow-lg shadow-violet-300/50 transition-transform;
+}
+
+.bottom-nav-add-orb-active {
+  @apply scale-105 shadow-xl shadow-violet-300/60;
+}
+
+.bottom-nav-label {
+  @apply text-base text-slate-500;
+}
+
+.bottom-nav-label-active {
+  @apply text-[#6f3bf3];
+}
+
+.hero-bar {
+  @apply flex flex-wrap items-center justify-between gap-3 rounded-2xl bg-white px-4 py-3 shadow-card sm:flex-nowrap sm:px-5 sm:py-4;
+}
+
+.chip {
+  @apply inline-flex items-center gap-2 rounded-full bg-slate-100 px-3 py-1 text-xs font-semibold text-slate-500;
+}
+
+.primary-pill {
+  @apply inline-flex min-h-11 items-center gap-2 rounded-full bg-gradient-to-r from-[#6f3bf3] via-[#7c3aed] to-[#9333ea] px-4 py-2 text-sm font-semibold text-white shadow-lg shadow-purple-300/40;
+}
+
+.no-scrollbar {
+  -ms-overflow-style: none;
+  scrollbar-width: none;
+}
+
+.no-scrollbar::-webkit-scrollbar {
+  display: none;
+}
