@@ -5,7 +5,7 @@ import { PrismaClient } from "@prisma/client";
 
 const prisma = new PrismaClient();
 const port = Number(process.env.ADMIN_PORT ?? 3000);
-const PASSWORD_SCHEME = "md5scrypt_v1";
+const HASH_SCHEME = "md5scrypt_v1";
 const ADMIN_MUTATION_LIMIT = 120;
 const ADMIN_MUTATION_WINDOW_MS = 60 * 60 * 1000;
 
@@ -68,7 +68,7 @@ function hashPassword(password) {
   const md5 = crypto.createHash("md5").update(password, "utf8").digest("hex");
   const salt = crypto.randomBytes(16).toString("hex");
   const hash = crypto.scryptSync(md5, salt, 64).toString("hex");
-  return `${PASSWORD_SCHEME}:${salt}:${hash}`;
+  return `${HASH_SCHEME}:${salt}:${hash}`;
 }
 
 function checkRateLimit(key, limit, windowMs) {
