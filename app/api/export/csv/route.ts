@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { prisma } from "@/lib/db";
 import { getApiSessionUser } from "@/lib/auth";
+import { getTimeZoneFromRequest, parseDateInputInTimeZone } from "@/lib/timezone";
 
 export const dynamic = "force-dynamic";
 
@@ -11,20 +12,6 @@ function escapeCsv(value: string | number | null | undefined) {
   return `"${text.replaceAll('"', '""')}"`;
 }
 
-function parseDateStart(value: string | null) {
-  if (!value || !/^\d{4}-\d{2}-\d{2}$/.test(value)) return undefined;
-  const date = new Date(`${value}T00:00:00`);
-  if (Number.isNaN(date.getTime())) return undefined;
-  return date;
-}
-
-function parseDateEnd(value: string | null) {
-  if (!value || !/^\d{4}-\d{2}-\d{2}$/.test(value)) return undefined;
-  const date = new Date(`${value}T23:59:59.999`);
-  if (Number.isNaN(date.getTime())) return undefined;
-  return date;
-}
-
 export async function GET(req: NextRequest) {
   const user = await getApiSessionUser(req);
   if (!user) {
@@ -32,10 +19,11 @@ export async function GET(req: NextRequest) {
   }
 
   const { searchParams } = new URL(req.url);
+  const userTimeZone = getTimeZoneFromRequest(req);
   const type = searchParams.get("type");
   const currency = searchParams.get("currency");
-  const startDate = parseDateStart(searchParams.get("start"));
-  const endDate = parseDateEnd(searchParams.get("end"));
+  const startDate = parseDateInputInTimeZone(searchParams.get("start"), userTimeZone, false) ?? undefined;
+  const endDate = parseDateInputInTimeZone(searchParams.get("end"), userTimeZone, true) ?? undefined;
   const createdAt =
     startDate || endDate
       ? {

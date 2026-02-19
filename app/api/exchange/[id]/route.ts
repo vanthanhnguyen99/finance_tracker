@@ -4,6 +4,7 @@ import { Prisma } from "@prisma/client";
 import { toMinor } from "@/lib/money";
 import { getWalletBalances } from "@/lib/wallet";
 import { getApiSessionUser } from "@/lib/auth";
+import { revalidatePath } from "next/cache";
 
 export const dynamic = "force-dynamic";
 
@@ -66,6 +67,8 @@ export async function PATCH(
       effectiveRate
     }
   });
+  revalidatePath("/");
+  revalidatePath("/history");
 
   return NextResponse.json({ exchange: updated });
 }
@@ -87,5 +90,7 @@ export async function DELETE(
   if (!deleted.count) {
     return NextResponse.json({ error: "Exchange not found" }, { status: 404 });
   }
+  revalidatePath("/");
+  revalidatePath("/history");
   return NextResponse.json({ ok: true });
 }

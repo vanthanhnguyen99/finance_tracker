@@ -9,7 +9,18 @@ coverage/
 !.env.example
 
 *.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
 .DS_Store
 
 prisma/dev.db
 prisma/dev.db-journal
+
+# Local backup artifacts
+backup.sql
+backups/
+
+# Local deployment/build metadata
+.vercel/

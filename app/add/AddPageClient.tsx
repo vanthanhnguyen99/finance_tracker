@@ -12,9 +12,16 @@ const tabs = [
 
 type TabKey = (typeof tabs)[number]["key"];
 
+function getLocalDateTimeInputValue(date = new Date()) {
+  const pad = (value: number) => String(value).padStart(2, "0");
+  return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())}T${pad(date.getHours())}:${pad(date.getMinutes())}`;
+}
+
 export default function AddPage() {
   const [tab, setTab] = useState<TabKey>("expense");
   const [message, setMessage] = useState<{ text: string; tone: "success" | "error" } | null>(null);
+  const [logTimeExpanded, setLogTimeExpanded] = useState(false);
+  const [logTimeValue, setLogTimeValue] = useState("");
   const hideTimer = useRef<NodeJS.Timeout | null>(null);
 
   useEffect(() => {
@@ -26,6 +33,50 @@ export default function AddPage() {
   function normalizeAmount(value: FormDataEntryValue | null) {
     const raw = typeof value === "string" ? value : "";
     return normalizeAmountForApi(raw);
+  }
+
+  function normalizeCreatedAtForApi(raw: string) {
+    if (!raw) return undefined;
+    const parsed = new Date(raw);
+    if (Number.isNaN(parsed.getTime())) return undefined;
+    return parsed.toISOString();
+  }
+
+  function toggleLogTime() {
+    setLogTimeExpanded((previous) => {
+      const next = !previous;
+      if (next) {
+        setLogTimeValue(getLocalDateTimeInputValue());
+      }
+      return next;
+    });
+  }
+
+  function renderLogTimeControl() {
+    return (
+      <div className="rounded-xl border border-slate-200 bg-slate-50 p-3">
+        <button
+          type="button"
+          onClick={toggleLogTime}
+          className="flex w-full items-center justify-between rounded-lg px-1 py-1 text-left text-sm font-semibold text-slate-600"
+        >
+          <span>{logTimeExpanded ? "Ẩn chỉnh thời gian log" : "Chỉnh thời gian log"}</span>
+          <span className="text-slate-400">{logTimeExpanded ? "▴" : "▾"}</span>
+        </button>
+        {logTimeExpanded ? (
+          <label className="mt-3 grid gap-1 text-[10px] font-semibold uppercase tracking-wide text-slate-400">
+            Thời gian giao dịch
+            <input
+              className="input"
+              name="createdAt"
+              type="datetime-local"
+              value={logTimeValue}
+              onChange={(event) => setLogTimeValue(event.currentTarget.value)}
+            />
+          </label>
+        ) : null}
+      </div>
+    );
   }
 
   function handleAmountInput(event: React.FormEvent<HTMLInputElement>) {
@@ -50,6 +101,7 @@ export default function AddPage() {
     const amountMajor = normalizeAmount(data.get("amount"));
     const note = data.get("note");
     const category = data.get("category");
+    const createdAt = normalizeCreatedAtForApi(logTimeExpanded ? logTimeValue : "");
 
     const res = await fetch("/api/transactions", {
       method: "POST",
@@ -59,7 +111,8 @@ export default function AddPage() {
         currency,
         amountMajor,
         note,
-        category
+        category,
+        createdAt
       })
     });
 
@@ -70,7 +123,9 @@ export default function AddPage() {
     }
 
     form.reset();
-      setMessage({ text: "Lưu thành công", tone: "success" });
+    setLogTimeExpanded(false);
+    setLogTimeValue("");
+    setMessage({ text: "Lưu thành công", tone: "success" });
     if (hideTimer.current) clearTimeout(hideTimer.current);
     hideTimer.current = setTimeout(() => setMessage(null), 5000);
   }
@@ -82,6 +137,7 @@ export default function AddPage() {
     const feeAmount = normalizeAmount(data.get("feeAmount"));
     const feeCurrency = data.get("feeCurrency");
     const provider = data.get("provider");
+    const createdAt = normalizeCreatedAtForApi(logTimeExpanded ? logTimeValue : "");
 
     const res = await fetch("/api/exchange", {
       method: "POST",
@@ -91,7 +147,8 @@ export default function AddPage() {
         toAmountVnd,
         feeAmount: feeAmount || undefined,
         feeCurrency: feeAmount ? feeCurrency : undefined,
-        provider
+        provider,
+        createdAt
       })
     });
 
@@ -102,6 +159,8 @@ export default function AddPage() {
     }
 
     form.reset();
+    setLogTimeExpanded(false);
+    setLogTimeValue("");
     setMessage({ text: "Lưu đổi tiền thành công", tone: "success" });
     if (hideTimer.current) clearTimeout(hideTimer.current);
     hideTimer.current = setTimeout(() => setMessage(null), 5000);
@@ -179,6 +238,7 @@ export default function AddPage() {
             <option value="Người vay gửi">Người vay gửi</option>
           </select>
           <input className="input" name="note" type="text" placeholder="Ghi chú (tuỳ chọn)" />
+          {renderLogTimeControl()}
           <button className="button" type="submit">Lưu thu nhập</button>
         </form>
       )}
@@ -221,6 +281,7 @@ export default function AddPage() {
             <option value="Hoàn trả tiền mượn">Hoàn trả tiền mượn</option>
           </select>
           <input className="input" name="note" type="text" placeholder="Ghi chú (tuỳ chọn)" />
+          {renderLogTimeControl()}
           <button className="button" type="submit">Lưu chi tiêu</button>
         </form>
       )}
@@ -273,6 +334,7 @@ export default function AddPage() {
             </select>
           </div>
           <input className="input" name="provider" type="text" placeholder="Nhà cung cấp (tuỳ chọn)" />
+          {renderLogTimeControl()}
           <button className="button" type="submit">Lưu đổi tiền</button>
         </form>
       )}

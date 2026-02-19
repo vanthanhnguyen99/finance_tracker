@@ -4,6 +4,8 @@ import { Currency, TransactionType } from "@prisma/client";
 import { HistoryList, type HistoryItem } from "../components/HistoryList";
 import { requireActivePageSession } from "@/lib/server-auth";
 import { LogoutButton } from "../components/LogoutButton";
+import { cookies } from "next/headers";
+import { parseDateInputInTimeZone, resolveTimeZone, TIMEZONE_COOKIE_NAME } from "@/lib/timezone";
 
 export default async function History({
   searchParams
@@ -11,9 +13,11 @@ export default async function History({
   searchParams: Promise<{ type?: string; currency?: string; start?: string; end?: string }>;
 }) {
   const user = await requireActivePageSession();
+  const cookieStore = await cookies();
+  const userTimeZone = resolveTimeZone(cookieStore.get(TIMEZONE_COOKIE_NAME)?.value);
   const { type, currency, start, end } = await searchParams;
-  const startDate = start ? new Date(start) : undefined;
-  const endDate = end ? new Date(`${end}T23:59:59.999`) : undefined;
+  const startDate = start ? parseDateInputInTimeZone(start, userTimeZone, false) ?? undefined : undefined;
+  const endDate = end ? parseDateInputInTimeZone(end, userTimeZone, true) ?? undefined : undefined;
   const hasInvalidDate =
     (startDate && Number.isNaN(startDate.getTime())) ||
     (endDate && Number.isNaN(endDate.getTime()));

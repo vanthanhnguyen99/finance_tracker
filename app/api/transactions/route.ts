@@ -3,6 +3,7 @@ import { prisma } from "@/lib/db";
 import { getWalletByCurrency, getWalletBalances } from "@/lib/wallet";
 import { toMinor } from "@/lib/money";
 import { getApiSessionUser } from "@/lib/auth";
+import { getTimeZoneFromRequest, parseDateInputInTimeZone } from "@/lib/timezone";
 
 export const dynamic = "force-dynamic";
 
@@ -13,6 +14,7 @@ export async function GET(req: NextRequest) {
   }
 
   const { searchParams } = new URL(req.url);
+  const userTimeZone = getTimeZoneFromRequest(req);
   const type = searchParams.get("type") || undefined;
   const currency = searchParams.get("currency") || undefined;
   const start = searchParams.get("start");
@@ -32,8 +34,16 @@ export async function GET(req: NextRequest) {
     where.currency = currency;
   }
   if (start || end) {
-    const startDate = start ? new Date(start) : undefined;
-    const endDate = end ? new Date(end) : undefined;
+    const startDate = start
+      ? /^\d{4}-\d{2}-\d{2}$/.test(start)
+        ? parseDateInputInTimeZone(start, userTimeZone, false) ?? undefined
+        : new Date(start)
+      : undefined;
+    const endDate = end
+      ? /^\d{4}-\d{2}-\d{2}$/.test(end)
+        ? parseDateInputInTimeZone(end, userTimeZone, true) ?? undefined
+        : new Date(end)
+      : undefined;
     if ((startDate && Number.isNaN(startDate.getTime())) || (endDate && Number.isNaN(endDate.getTime()))) {
       return NextResponse.json({ error: "Invalid date range" }, { status: 400 });
     }
@@ -66,9 +76,17 @@ export async function POST(req: NextRequest) {
   const amountMajor = Number(body.amountMajor);
   const note = typeof body.note === "string" ? body.note : undefined;
   const category = typeof body.category === "string" ? body.category : undefined;
+  const createdAtRaw = body.createdAt;
+  const createdAt =
+    typeof createdAtRaw === "string" && createdAtRaw
+      ? new Date(createdAtRaw)
+      : undefined;
 
   if (!type || !currency || !Number.isFinite(amountMajor) || amountMajor <= 0) {
     return NextResponse.json({ error: "Invalid payload" }, { status: 400 });
+  }
+  if (createdAt && Number.isNaN(createdAt.getTime())) {
+    return NextResponse.json({ error: "Invalid createdAt" }, { status: 400 });
   }
 
   const wallet = await getWalletByCurrency(currency);
@@ -93,7 +111,8 @@ export async function POST(req: NextRequest) {
       amount: amountMinor,
       currency,
       category,
-      note
+      note,
+      ...(createdAt ? { createdAt } : {})
     }
   });
 

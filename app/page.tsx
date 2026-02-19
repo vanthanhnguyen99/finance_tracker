@@ -8,6 +8,14 @@ import { TimeFilterTabs } from "./components/TimeFilterTabs";
 import { unstable_noStore as noStore } from "next/cache";
 import { requireActivePageSession } from "@/lib/server-auth";
 import { LogoutButton } from "./components/LogoutButton";
+import { cookies } from "next/headers";
+import {
+  getDateInTimeZone,
+  parseDateInputInTimeZone,
+  resolveTimeZone,
+  TIMEZONE_COOKIE_NAME,
+  zonedDateTimeToUtc
+} from "@/lib/timezone";
 
 export const dynamic = "force-dynamic";
 
@@ -31,6 +39,8 @@ export default async function Dashboard({
 }) {
   noStore();
   const user = await requireActivePageSession();
+  const cookieStore = await cookies();
+  const userTimeZone = resolveTimeZone(cookieStore.get(TIMEZONE_COOKIE_NAME)?.value);
   const resolvedSearchParams = await searchParams;
   const filterParam = resolvedSearchParams.filter;
   const filter: TimeFilter =
@@ -43,44 +53,45 @@ export default async function Dashboard({
       : "month";
   const expenseCurrency = resolvedSearchParams.expenseCurrency ?? "DKK";
 
-  function parseDateInput(value?: string) {
-    if (!value || !/^\d{4}-\d{2}-\d{2}$/.test(value)) return null;
-    const parsed = new Date(`${value}T00:00:00`);
-    if (Number.isNaN(parsed.getTime())) return null;
-    return parsed;
-  }
-
-  const parsedFrom = parseDateInput(resolvedSearchParams.from);
-  const parsedTo = parseDateInput(resolvedSearchParams.to);
+  const parsedFrom = parseDateInputInTimeZone(resolvedSearchParams.from, userTimeZone, false);
+  const parsedTo = parseDateInputInTimeZone(resolvedSearchParams.to, userTimeZone, true);
   const hasCustomRange = Boolean(parsedFrom && parsedTo && parsedFrom <= parsedTo);
-  const presetRange = getRange(filter);
+  const presetRange = getRange(filter, userTimeZone);
   const start = hasCustomRange ? parsedFrom! : presetRange.start;
-  const end = hasCustomRange
-    ? new Date(parsedTo!.getFullYear(), parsedTo!.getMonth(), parsedTo!.getDate(), 23, 59, 59, 999)
-    : presetRange.end;
+  const end = hasCustomRange ? parsedTo! : presetRange.end;
   const previousRange = getPreviousRangeFromBounds(start, end);
   const previousRange2 = getPreviousRangeFromBounds(previousRange.start, previousRange.end);
   const presetTrendPeriods = !hasCustomRange
     ? (() => {
         if (filter === "month") {
+          const localStart = getDateInTimeZone(presetRange.start, userTimeZone);
           return Array.from({ length: 3 }).map((_, index) => {
-            const startOfMonth = new Date(
-              presetRange.start.getFullYear(),
-              presetRange.start.getMonth() - (2 - index),
+            const monthOffset = 2 - index;
+            const baseMonthIndex = localStart.month - 1 - monthOffset;
+            const monthStartYear = localStart.year + Math.floor(baseMonthIndex / 12);
+            const monthStartMonthIndex = ((baseMonthIndex % 12) + 12) % 12;
+            const monthStartMonth = monthStartMonthIndex + 1;
+            const daysInMonth = new Date(Date.UTC(monthStartYear, monthStartMonth, 0)).getUTCDate();
+
+            const startOfMonth = zonedDateTimeToUtc(
+              monthStartYear,
+              monthStartMonth,
               1,
               0,
               0,
               0,
-              0
-            );
-            const endOfMonth = new Date(
-              startOfMonth.getFullYear(),
-              startOfMonth.getMonth() + 1,
               0,
+              userTimeZone
+            );
+            const endOfMonth = zonedDateTimeToUtc(
+              monthStartYear,
+              monthStartMonth,
+              daysInMonth,
               23,
               59,
               59,
-              999
+              999,
+              userTimeZone
             );
             return { start: startOfMonth, end: endOfMonth };
           });
@@ -113,23 +124,31 @@ export default async function Dashboard({
     Math.min(start.getTime(), previousRange.start.getTime(), trendWindowStart.getTime())
   );
   const dateFormatter = new Intl.DateTimeFormat("vi-VN", {
+    timeZone: userTimeZone,
     day: "2-digit",
     month: "2-digit"
   });
-  const inputFormatter = new Intl.DateTimeFormat("en-CA");
+  const inputFormatter = new Intl.DateTimeFormat("en-CA", { timeZone: userTimeZone });
   const periodLabel = `${dateFormatter.format(start)} - ${dateFormatter.format(end)}`;
   const fromDateInput = inputFormatter.format(start);
   const toDateInput = inputFormatter.format(end);
 
   const formatDateSlash = (value: Date) =>
-    `${String(value.getDate()).padStart(2, "0")}/${String(value.getMonth() + 1).padStart(2, "0")}`;
+    new Intl.DateTimeFormat("en-GB", {
+      timeZone: userTimeZone,
+      day: "2-digit",
+      month: "2-digit"
+    }).format(value);
   const formatDateDash = (value: Date) =>
-    `${String(value.getDate()).padStart(2, "0")}-${String(value.getMonth() + 1).padStart(2, "0")}`;
+    new Intl.DateTimeFormat("en-GB", {
+      timeZone: userTimeZone,
+      day: "2-digit",
+      month: "2-digit"
+    }).format(value).replace("/", "-");
   const formatRangeLabel = (rangeStart: Date, rangeEnd: Date) => {
-    const sameDay =
-      rangeStart.getFullYear() === rangeEnd.getFullYear() &&
-      rangeStart.getMonth() === rangeEnd.getMonth() &&
-      rangeStart.getDate() === rangeEnd.getDate();
+    const startDay = formatDateSlash(rangeStart);
+    const endDay = formatDateSlash(rangeEnd);
+    const sameDay = startDay === endDay;
     if (sameDay) return formatDateSlash(rangeStart);
     return `${formatDateDash(rangeStart)}->${formatDateDash(rangeEnd)}`;
   };
@@ -303,13 +322,6 @@ export default async function Dashboard({
     if (txn.type === "INCOME") bucket.income += txn.amount;
     if (txn.type === "EXPENSE") bucket.expense += txn.amount;
   }
-  for (const exchange of exchangeDkkEntries) {
-    const bucket = trendBuckets.find(
-      (item) => exchange.createdAt >= item.start && exchange.createdAt <= item.end
-    );
-    if (!bucket) continue;
-    bucket.expense += exchangeToDkkExpense(exchange);
-  }
 
   const customTrendData = trendBuckets.map((bucket) => {
     const label = formatRangeLabel(bucket.start, bucket.end);
@@ -330,7 +342,6 @@ export default async function Dashboard({
       if (txn.type === "INCOME") income += txn.amount;
       if (txn.type === "EXPENSE") expense += txn.amount;
     }
-    expense += sumExchangeDkkInRange(period.start, period.end);
     return {
       ...period,
       income,
@@ -379,7 +390,7 @@ export default async function Dashboard({
     .join(" ");
 
   const cycleTargetPoints =
-    totalDays <= 6
+    totalDays <= 7
       ? totalDays
       : totalDays <= 20
         ? 6
@@ -406,15 +417,7 @@ export default async function Dashboard({
       (item) => txn.createdAt >= item.start && txn.createdAt <= item.end
     );
     if (!bucket) continue;
-    if (txn.type === "INCOME") bucket.income += txn.amount;
     if (txn.type === "EXPENSE") bucket.expense += txn.amount;
-  }
-  for (const exchange of exchangeDkkEntries) {
-    const bucket = cycleBuckets.find(
-      (item) => exchange.createdAt >= item.start && exchange.createdAt <= item.end
-    );
-    if (!bucket) continue;
-    bucket.expense += exchangeToDkkExpense(exchange);
   }
 
   const inCycleData = cycleBuckets.map((bucket) => ({
@@ -422,20 +425,13 @@ export default async function Dashboard({
     label: formatDateSlash(bucket.end)
   }));
   const maxInCycleValue = Math.max(
-    ...inCycleData.map((item) => Math.max(item.income, item.expense)),
+    ...inCycleData.map((item) => item.expense),
     1
   );
   const inCycleStepX =
     inCycleData.length > 1
       ? (trendChartWidth - trendChartPaddingX * 2) / (inCycleData.length - 1)
       : 0;
-  const inCycleIncomePoints = inCycleData
-    .map((item, index) => {
-      const x = trendChartPaddingX + inCycleStepX * index;
-      const y = trendChartHeight - trendChartPaddingY - (item.income / maxInCycleValue) * (trendChartHeight - trendChartPaddingY * 2);
-      return `${x},${y}`;
-    })
-    .join(" ");
   const inCycleExpensePoints = inCycleData
     .map((item, index) => {
       const x = trendChartPaddingX + inCycleStepX * index;
@@ -736,7 +732,7 @@ export default async function Dashboard({
 
         <div className="card">
           <div className="flex items-center justify-between">
-            <h2 className="text-base font-semibold text-ink">Thu nhập & Chi tiêu trong kỳ</h2>
+            <h2 className="text-base font-semibold text-ink">Chi tiêu trong kỳ (DKK)</h2>
             <span className="chip">{inCycleData.length} mốc</span>
           </div>
           <div className="mt-5 rounded-2xl border border-slate-200 bg-slate-50 p-3">
@@ -744,7 +740,7 @@ export default async function Dashboard({
               viewBox={`0 0 ${trendChartWidth} ${trendChartHeight}`}
               className="h-36 w-full"
               role="img"
-              aria-label="Biểu đồ đường thu nhập và chi tiêu trong kỳ hiện tại"
+              aria-label="Biểu đồ đường chi tiêu DKK trong kỳ hiện tại"
             >
               <line
                 x1={trendChartPaddingX}
@@ -756,14 +752,6 @@ export default async function Dashboard({
               />
               <polyline
                 fill="none"
-                stroke="#34d399"
-                strokeWidth="3"
-                strokeLinecap="round"
-                strokeLinejoin="round"
-                points={inCycleIncomePoints}
-              />
-              <polyline
-                fill="none"
                 stroke="#f87171"
                 strokeWidth="3"
                 strokeLinecap="round"
@@ -772,17 +760,12 @@ export default async function Dashboard({
               />
               {inCycleData.map((item, index) => {
                 const x = trendChartPaddingX + inCycleStepX * index;
-                const incomeY =
-                  trendChartHeight -
-                  trendChartPaddingY -
-                  (item.income / maxInCycleValue) * (trendChartHeight - trendChartPaddingY * 2);
                 const expenseY =
                   trendChartHeight -
                   trendChartPaddingY -
                   (item.expense / maxInCycleValue) * (trendChartHeight - trendChartPaddingY * 2);
                 return (
                   <g key={item.label}>
-                    <circle cx={x} cy={incomeY} r="3" fill="#34d399" />
                     <circle cx={x} cy={expenseY} r="3" fill="#f87171" />
                   </g>
                 );
@@ -793,7 +776,7 @@ export default async function Dashboard({
               style={{ gridTemplateColumns: `repeat(${inCycleData.length}, minmax(0, 1fr))` }}
             >
               {inCycleData.map((item, index) => {
-                const showLabel = inCycleData.length <= 6 || index % 2 === 0;
+                const showLabel = inCycleData.length <= 7 || index % 2 === 0;
                 return (
                   <span key={item.label} className="truncate text-center">
                     <span className="whitespace-nowrap">{showLabel ? item.label : ""}</span>
@@ -803,10 +786,6 @@ export default async function Dashboard({
             </div>
           </div>
           <div className="mt-4 flex items-center gap-4 text-xs text-slate-500">
-            <span className="flex items-center gap-2">
-              <span className="h-2 w-2 rounded-full bg-emerald-400" />
-              Thu nhập
-            </span>
             <span className="flex items-center gap-2">
               <span className="h-2 w-2 rounded-full bg-rose-400" />
               Chi tiêu

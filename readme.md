@@ -10,20 +10,30 @@
 - **Chi tiêu**: hỗ trợ DKK/VND, danh mục cố định, ghi chú.
 - **Đổi tiền (DKK → VND)**: nhập số DKK đổi, số VND nhận, phí (DKK), hệ thống tự tính tỷ giá.
 - **Dashboard**:
-  - Filter thời gian: Hôm nay / Tuần này / Tháng này
+  - Filter thời gian: Hôm nay / Tuần này / Tháng này / 7 ngày / 30 ngày
+  - Hỗ trợ thêm khoảng ngày tùy chỉnh (`from`/`to`)
   - Tổng thu nhập, chi tiêu, số dư ví
+  - Hiển thị số dư cả **Ví DKK** và **Ví VND** ở cụm card đầu trang
   - Expense breakdown theo danh mục + filter tiền tệ (DKK/VND)
   - Khi filter DKK: Exchange được tính như 1 loại chi tiêu “Chuyển đổi tiền tệ”
-  - Monthly overview 6 tháng gần nhất (DKK)
+  - Chart `Chi tiêu trong kỳ (DKK)` chỉ thể hiện transaction `EXPENSE` DKK (không cộng exchange)
+  - Ở chart `Xu hướng theo kỳ lọc (DKK)`, line `Chi tiêu` cũng chỉ tính transaction `EXPENSE` DKK
+  - Monthly overview 4 tháng gần nhất (DKK)
 - **Lịch sử giao dịch**:
   - Filter theo loại, tiền tệ, khoảng thời gian
   - Click để xem chi tiết (note, category, provider, fee)
   - Sửa / xóa giao dịch
   - Sửa Exchange: DKK đổi, VND nhận, phí (DKK)
+  - Xuất CSV theo bộ lọc hiện tại
+- **Đăng xuất**:
+  - Có nút `Đăng xuất` rõ ràng ở các màn chính (Tổng quan / Thêm / Lịch sử)
 - **Quên mật khẩu (cần admin duyệt)**:
   - User gửi yêu cầu đặt mật khẩu mới từ màn `Quên mật khẩu`
   - Admin duyệt/từ chối yêu cầu trên admin app
   - Chỉ sau khi duyệt, mật khẩu mới mới có hiệu lực
+- **Admin backup/restore dữ liệu toàn hệ thống**:
+  - Backup JSON toàn hệ thống (wallets, users, sessions, password reset requests, transactions, exchanges)
+  - Restore từ file JSON với mode mặc định ghi đè toàn bộ dữ liệu hiện tại
 
 ---
 
@@ -46,7 +56,7 @@
 
 ## 3. Kiến trúc & Stack
 
-- **Frontend**: Next.js (App Router), TailwindCSS
+- **Frontend**: Next.js 16 (App Router), TailwindCSS, React 19
 - **Backend**: Next.js API Routes
 - **Database**: PostgreSQL + Prisma ORM
 - **Deployment**: Docker + Docker Compose
@@ -114,6 +124,10 @@
 **Scripts**
 - `./start.sh` — chạy Docker Compose
 - `./stop.sh` — dừng Docker Compose
+
+**Dependency lock (khuyến nghị bắt buộc cho Docker build)**
+- Dự án dùng `package-lock.json`.
+- Trong Dockerfile, stage cài dependency ưu tiên `npm ci` khi có lockfile để build deterministic.
 
 **.env**
 ```
@@ -231,6 +245,12 @@ cat backup.sql | docker compose exec -T db psql -U "$POSTGRES_USER" "$POSTGRES_D
 - Lưu tiền dạng integer (minor units): DKK = øre (×100), VND = nguyên.
 - Các API `transactions`/`exchange` hỗ trợ create/update/delete.
 - Dashboard dùng `noStore()` để luôn hiển thị dữ liệu mới.
+- Sau khi sửa/xóa transaction hoặc exchange, hệ thống `revalidatePath("/")` và `revalidatePath("/history")` để tránh stale data khi quay lại Tổng quan.
+- Thêm API export CSV: `GET /api/export/csv` (có auth, hỗ trợ filter `type/currency/start/end`).
+- Timezone:
+  - Hệ thống lấy timezone theo thiết bị người dùng (sync qua cookie `finance_tz`).
+  - Áp dụng cho filter ngày ở Tổng quan/Lịch sử/API (`dashboard`, `transactions`, `export csv`) để tránh lệch ngày do UTC.
+  - Nếu không có timezone từ thiết bị, fallback `UTC`.
 
 
 ---
@@ -344,6 +364,8 @@ cat backup.sql | docker compose exec -T db psql -U "$POSTGRES_USER" "$POSTGRES_D
 - `Xu hướng theo kỳ lọc (DKK)` đã đổi sang biểu đồ **đường**.
 - Giảm mật độ dữ liệu hiển thị còn khoảng **3 mốc** để dễ đọc trên iOS.
 - Chart so sánh kỳ trước giữ 2 nhóm chính: `Thu nhập`, `Chi tiêu`.
+- Chart `Chi tiêu trong kỳ` chỉ còn 1 line **Chi tiêu (DKK)**, và chỉ lấy transaction `EXPENSE` DKK.
+- Line `Chi tiêu` của chart `Xu hướng theo kỳ lọc (DKK)` cũng chỉ lấy transaction `EXPENSE` DKK.
 - Chart tổng quan tháng rút gọn còn `4 tháng gần nhất (DKK)` để giao diện gọn hơn.
 
 ### 13.5 Tối ưu hiển thị iOS Safari
@@ -365,3 +387,38 @@ cat backup.sql | docker compose exec -T db psql -U "$POSTGRES_USER" "$POSTGRES_D
 - Khi duyệt yêu cầu:
   - Cập nhật `passwordHash` mới cho user.
   - Thu hồi toàn bộ session đang mở của user để đảm bảo an toàn.
+
+### 13.7 Security & Dependencies
+- Nâng cấp framework để xử lý các cảnh báo bảo mật đã biết:
+  - `next` -> `16.1.6`
+  - `react` / `react-dom` -> `19.2.4`
+- Cập nhật thêm:
+  - `postcss` -> `8.5.6`
+  - `autoprefixer` -> `10.4.24`
+- Bổ sung mitigation trong middleware: chặn request có header `x-middleware-subrequest` từ bên ngoài.
+
+### 13.8 Export CSV, Logout và Icon
+- Thêm nút `Xuất CSV` ở màn Lịch sử.
+- Thêm nút `Đăng xuất` ở các màn chính.
+- Thêm icon web/PWA dùng `public/logo.svg` (metadata + manifest).
+
+### 13.9 Admin Backup & Restore System Data
+- Admin app bổ sung thao tác cấp hệ thống:
+  - `Backup toàn hệ thống (JSON)`: tải file backup đầy đủ.
+  - `Restore toàn hệ thống từ file`: import lại toàn bộ dữ liệu từ file JSON backup.
+- API admin mới:
+  - `GET /api/system/backup`
+  - `POST /api/system/restore`
+- Phạm vi dữ liệu trong backup hệ thống:
+  - `wallets`
+  - `users` (gồm `displayName`, `email`, `status`, `note`, `passwordHash`, timestamps)
+  - `sessions`
+  - `passwordResetRequests`
+  - `transactions`
+  - `exchanges`
+- Lưu ý bảo mật:
+  - Backup **không** chứa mật khẩu gốc, chỉ chứa `passwordHash`.
+  - Do có `passwordHash` và `session token`, file backup phải được lưu trữ/an toàn như dữ liệu nhạy cảm.
+- Restore đang chạy theo mode mặc định `replace`:
+  - Xóa dữ liệu hiện có ở các bảng nghiệp vụ chính.
+  - Nạp lại dữ liệu từ file backup.

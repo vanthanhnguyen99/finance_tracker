@@ -8,8 +8,12 @@ const port = Number(process.env.ADMIN_PORT ?? 3000);
 const HASH_SCHEME = "md5scrypt_v1";
 const ADMIN_MUTATION_LIMIT = 120;
 const ADMIN_MUTATION_WINDOW_MS = 60 * 60 * 1000;
+const ADMIN_BODY_LIMIT_BYTES = 10 * 1024 * 1024;
 
 const allowedStatuses = new Set(["PENDING", "ACTIVE", "DISABLED", "REJECTED"]);
+const allowedPasswordResetStatuses = new Set(["PENDING", "APPROVED", "REJECTED"]);
+const allowedTransactionTypes = new Set(["INCOME", "EXPENSE", "EXCHANGE"]);
+const allowedCurrencies = new Set(["DKK", "VND"]);
 const mutationRateStore = new Map();
 
 function sendJson(res, status, payload) {
@@ -45,7 +49,7 @@ async function parseBody(req) {
     let data = "";
     req.on("data", (chunk) => {
       data += chunk;
-      if (data.length > 1024 * 1024) {
+      if (data.length > ADMIN_BODY_LIMIT_BYTES) {
         reject(new Error("Payload too large"));
       }
     });
@@ -90,6 +94,176 @@ function checkRateLimit(key, limit, windowMs) {
     allowed: true,
     retryAfterSeconds: Math.max(1, Math.ceil((current.resetAt - now) / 1000))
   };
+}
+
+function parseIsoDate(value, fieldName) {
+  const parsed = new Date(String(value ?? ""));
+  if (Number.isNaN(parsed.getTime())) {
+    throw new Error(`${fieldName} is invalid`);
+  }
+  return parsed;
+}
+
+function parseInteger(value, fieldName) {
+  const num = Number(value);
+  if (!Number.isInteger(num)) {
+    throw new Error(`${fieldName} must be an integer`);
+  }
+  return num;
+}
+
+function parsePositiveNumber(value, fieldName) {
+  const num = Number(value);
+  if (!Number.isFinite(num) || num <= 0) {
+    throw new Error(`${fieldName} must be greater than 0`);
+  }
+  return num;
+}
+
+function normalizeUsers(records) {
+  if (!Array.isArray(records)) return [];
+  return records.map((item, index) => {
+    const row = item ?? {};
+    const id = String(row.id ?? "").trim();
+    const displayName = String(row.displayName ?? "").trim();
+    const status = String(row.status ?? "");
+    if (!id) throw new Error(`users[${index}].id is required`);
+    if (!displayName) throw new Error(`users[${index}].displayName is required`);
+    if (!allowedStatuses.has(status)) throw new Error(`users[${index}].status is invalid`);
+    return {
+      id,
+      displayName,
+      email: row.email == null ? null : String(row.email),
+      passwordHash: row.passwordHash == null ? null : String(row.passwordHash),
+      note: row.note == null ? null : String(row.note),
+      status,
+      createdAt: parseIsoDate(row.createdAt, `users[${index}].createdAt`),
+      updatedAt: parseIsoDate(row.updatedAt, `users[${index}].updatedAt`)
+    };
+  });
+}
+
+function normalizeWallets(records) {
+  if (!Array.isArray(records)) return [];
+  return records.map((item, index) => {
+    const row = item ?? {};
+    const id = String(row.id ?? "").trim();
+    const name = String(row.name ?? "").trim();
+    const currency = String(row.currency ?? "");
+    if (!id) throw new Error(`wallets[${index}].id is required`);
+    if (!name) throw new Error(`wallets[${index}].name is required`);
+    if (!allowedCurrencies.has(currency)) throw new Error(`wallets[${index}].currency is invalid`);
+    return {
+      id,
+      name,
+      currency,
+      createdAt: parseIsoDate(row.createdAt, `wallets[${index}].createdAt`),
+      updatedAt: parseIsoDate(row.updatedAt, `wallets[${index}].updatedAt`)
+    };
+  });
+}
+
+function normalizeSessions(records) {
+  if (!Array.isArray(records)) return [];
+  return records.map((item, index) => {
+    const row = item ?? {};
+    const id = String(row.id ?? "").trim();
+    const userId = String(row.userId ?? "").trim();
+    const token = String(row.token ?? "").trim();
+    if (!id) throw new Error(`sessions[${index}].id is required`);
+    if (!userId) throw new Error(`sessions[${index}].userId is required`);
+    if (!token) throw new Error(`sessions[${index}].token is required`);
+    return {
+      id,
+      userId,
+      token,
+      expiresAt: parseIsoDate(row.expiresAt, `sessions[${index}].expiresAt`),
+      createdAt: parseIsoDate(row.createdAt, `sessions[${index}].createdAt`)
+    };
+  });
+}
+
+function normalizePasswordResetRequests(records) {
+  if (!Array.isArray(records)) return [];
+  return records.map((item, index) => {
+    const row = item ?? {};
+    const id = String(row.id ?? "").trim();
+    const userId = String(row.userId ?? "").trim();
+    const newPasswordHash = String(row.newPasswordHash ?? "").trim();
+    const status = String(row.status ?? "");
+    if (!id) throw new Error(`passwordResetRequests[${index}].id is required`);
+    if (!userId) throw new Error(`passwordResetRequests[${index}].userId is required`);
+    if (!newPasswordHash) throw new Error(`passwordResetRequests[${index}].newPasswordHash is required`);
+    if (!allowedPasswordResetStatuses.has(status)) {
+      throw new Error(`passwordResetRequests[${index}].status is invalid`);
+    }
+    return {
+      id,
+      userId,
+      newPasswordHash,
+      status,
+      createdAt: parseIsoDate(row.createdAt, `passwordResetRequests[${index}].createdAt`),
+      reviewedAt: row.reviewedAt == null ? null : parseIsoDate(row.reviewedAt, `passwordResetRequests[${index}].reviewedAt`)
+    };
+  });
+}
+
+function normalizeSystemTransactions(records) {
+  if (!Array.isArray(records)) return [];
+  return records.map((item, index) => {
+    const row = item ?? {};
+    const id = String(row.id ?? "").trim();
+    const type = String(row.type ?? "");
+    const walletId = String(row.walletId ?? "").trim();
+    const currency = String(row.currency ?? "");
+    const userIdRaw = row.userId == null ? null : String(row.userId).trim();
+    if (!id) throw new Error(`transactions[${index}].id is required`);
+    if (!allowedTransactionTypes.has(type)) throw new Error(`transactions[${index}].type is invalid`);
+    if (!walletId) throw new Error(`transactions[${index}].walletId is required`);
+    if (!allowedCurrencies.has(currency)) throw new Error(`transactions[${index}].currency is invalid`);
+    return {
+      id,
+      userId: userIdRaw || null,
+      type,
+      walletId,
+      amount: parseInteger(row.amount, `transactions[${index}].amount`),
+      currency,
+      category: row.category == null ? null : String(row.category),
+      note: row.note == null ? null : String(row.note),
+      createdAt: parseIsoDate(row.createdAt, `transactions[${index}].createdAt`)
+    };
+  });
+}
+
+function normalizeSystemExchanges(records) {
+  if (!Array.isArray(records)) return [];
+  return records.map((item, index) => {
+    const row = item ?? {};
+    const id = String(row.id ?? "").trim();
+    const fromWalletId = String(row.fromWalletId ?? "").trim();
+    const toWalletId = String(row.toWalletId ?? "").trim();
+    const userIdRaw = row.userId == null ? null : String(row.userId).trim();
+    const feeCurrencyRaw = row.feeCurrency == null ? null : String(row.feeCurrency);
+    if (!id) throw new Error(`exchanges[${index}].id is required`);
+    if (!fromWalletId) throw new Error(`exchanges[${index}].fromWalletId is required`);
+    if (!toWalletId) throw new Error(`exchanges[${index}].toWalletId is required`);
+    if (feeCurrencyRaw !== null && !allowedCurrencies.has(feeCurrencyRaw)) {
+      throw new Error(`exchanges[${index}].feeCurrency is invalid`);
+    }
+    return {
+      id,
+      userId: userIdRaw || null,
+      fromWalletId,
+      toWalletId,
+      fromAmountDkk: parseInteger(row.fromAmountDkk, `exchanges[${index}].fromAmountDkk`),
+      toAmountVnd: parseInteger(row.toAmountVnd, `exchanges[${index}].toAmountVnd`),
+      effectiveRate: String(parsePositiveNumber(row.effectiveRate, `exchanges[${index}].effectiveRate`)),
+      feeAmount: row.feeAmount == null ? null : parseInteger(row.feeAmount, `exchanges[${index}].feeAmount`),
+      feeCurrency: feeCurrencyRaw,
+      provider: row.provider == null ? null : String(row.provider),
+      createdAt: parseIsoDate(row.createdAt, `exchanges[${index}].createdAt`)
+    };
+  });
 }
 
 function appHtml() {
@@ -163,7 +337,7 @@ function appHtml() {
       <div class="header">
         <div>
           <h1 class="title">Finance Tracker Admin</h1>
-          <div class="muted">Quản lý tài khoản đăng ký, duyệt quyền sử dụng, duyệt yêu cầu quên mật khẩu và thu hồi session.</div>
+          <div class="muted">Quản lý tài khoản đăng ký, duyệt quyền sử dụng, backup/restore toàn hệ thống, duyệt quên mật khẩu và thu hồi session.</div>
         </div>
         <span class="chip">Local Admin (6070)</span>
       </div>
@@ -179,6 +353,11 @@ function appHtml() {
           <option value="REJECTED">REJECTED</option>
         </select>
         <button class="btn btn-ghost" onclick="approveAllPending()">Duyệt tất cả PENDING</button>
+      </div>
+      <div class="actions">
+        <button class="btn btn-ghost" onclick="downloadSystemBackup()">Backup toàn hệ thống (JSON)</button>
+        <button class="btn btn-danger" onclick="openSystemRestorePicker()">Restore toàn hệ thống từ file</button>
+        <input id="systemRestoreFile" type="file" accept="application/json" style="display:none" />
       </div>
       <div id="msg" class="msg"></div>
     </section>
@@ -376,6 +555,62 @@ function appHtml() {
       }
     }
 
+    async function downloadSystemBackup() {
+      try {
+        const payload = await api('/api/system/backup');
+        const exportedAt = new Date().toISOString().slice(0, 19).replaceAll(':', '-');
+        const fileName = 'backup-system-' + exportedAt + '.json';
+        const blob = new Blob([JSON.stringify(payload, null, 2)], { type: 'application/json' });
+        const objectUrl = URL.createObjectURL(blob);
+        const anchor = document.createElement('a');
+        anchor.href = objectUrl;
+        anchor.download = fileName;
+        document.body.appendChild(anchor);
+        anchor.click();
+        anchor.remove();
+        URL.revokeObjectURL(objectUrl);
+        setMsg('Đã tải backup JSON toàn hệ thống.');
+      } catch (e) {
+        setMsg(e.message);
+      }
+    }
+
+    function openSystemRestorePicker() {
+      document.getElementById('systemRestoreFile')?.click();
+    }
+
+    async function handleSystemRestoreFileChange() {
+      const input = document.getElementById('systemRestoreFile');
+      const file = input?.files?.[0];
+      if (!file) return;
+      try {
+        const text = await file.text();
+        const payload = JSON.parse(text);
+        const shouldRestore = window.confirm(
+          'Restore toàn hệ thống sẽ ghi đè dữ liệu hiện tại (users/transactions/exchanges/sessions). Tiếp tục?'
+        );
+        if (!shouldRestore) {
+          input.value = '';
+          return;
+        }
+        const result = await api('/api/system/restore', 'POST', {
+          mode: 'replace',
+          backup: payload
+        });
+        setMsg(
+          'Restore thành công: ' +
+            result.userCount + ' user, ' +
+            result.transactionCount + ' giao dịch, ' +
+            result.exchangeCount + ' exchange.'
+        );
+        input.value = '';
+        await loadUsers();
+      } catch (e) {
+        setMsg(e.message || 'Restore thất bại');
+        if (input) input.value = '';
+      }
+    }
+
     async function rejectPasswordReset(requestId) {
       try {
         await api('/api/password-reset-requests/' + requestId + '/reject', 'POST');
@@ -469,6 +704,10 @@ function appHtml() {
     window.approveAllPending = approveAllPending;
     window.approvePasswordReset = approvePasswordReset;
     window.rejectPasswordReset = rejectPasswordReset;
+    window.downloadSystemBackup = downloadSystemBackup;
+    window.openSystemRestorePicker = openSystemRestorePicker;
+
+    document.getElementById('systemRestoreFile')?.addEventListener('change', handleSystemRestoreFileChange);
   </script>
 </body>
 </html>`;
@@ -496,6 +735,7 @@ const server = http.createServer(async (req, res) => {
 
     if (
       (req.method === "PATCH" && url.pathname.startsWith("/api/users/")) ||
+      (req.method === "POST" && url.pathname.endsWith("/restore")) ||
       (req.method === "POST" && url.pathname.endsWith("/revoke-sessions")) ||
       (req.method === "POST" && url.pathname.startsWith("/api/password-reset-requests/"))
     ) {
@@ -524,6 +764,250 @@ const server = http.createServer(async (req, res) => {
         }
       });
       sendJson(res, 200, { users });
+      return;
+    }
+
+    if (req.method === "GET" && url.pathname === "/api/system/backup") {
+      const [wallets, users, sessions, passwordResetRequests, transactions, exchanges] = await Promise.all([
+        prisma.wallet.findMany({ orderBy: { currency: "asc" } }),
+        prisma.userAllowlist.findMany({ orderBy: { createdAt: "asc" } }),
+        prisma.session.findMany({ orderBy: { createdAt: "asc" } }),
+        prisma.passwordResetRequest.findMany({ orderBy: { createdAt: "asc" } }),
+        prisma.transaction.findMany({ orderBy: { createdAt: "asc" } }),
+        prisma.exchange.findMany({ orderBy: { createdAt: "asc" } })
+      ]);
+
+      sendJson(res, 200, {
+        version: 1,
+        scope: "system",
+        source: "finance-tracker-admin",
+        exportedAt: new Date().toISOString(),
+        wallets: wallets.map((row) => ({
+          id: row.id,
+          name: row.name,
+          currency: row.currency,
+          createdAt: row.createdAt.toISOString(),
+          updatedAt: row.updatedAt.toISOString()
+        })),
+        users: users.map((row) => ({
+          id: row.id,
+          displayName: row.displayName,
+          email: row.email,
+          passwordHash: row.passwordHash,
+          note: row.note,
+          status: row.status,
+          createdAt: row.createdAt.toISOString(),
+          updatedAt: row.updatedAt.toISOString()
+        })),
+        sessions: sessions.map((row) => ({
+          id: row.id,
+          userId: row.userId,
+          token: row.token,
+          expiresAt: row.expiresAt.toISOString(),
+          createdAt: row.createdAt.toISOString()
+        })),
+        passwordResetRequests: passwordResetRequests.map((row) => ({
+          id: row.id,
+          userId: row.userId,
+          newPasswordHash: row.newPasswordHash,
+          status: row.status,
+          createdAt: row.createdAt.toISOString(),
+          reviewedAt: row.reviewedAt ? row.reviewedAt.toISOString() : null
+        })),
+        transactions: transactions.map((row) => ({
+          id: row.id,
+          userId: row.userId,
+          type: row.type,
+          walletId: row.walletId,
+          amount: row.amount,
+          currency: row.currency,
+          category: row.category,
+          note: row.note,
+          createdAt: row.createdAt.toISOString()
+        })),
+        exchanges: exchanges.map((row) => ({
+          id: row.id,
+          userId: row.userId,
+          fromWalletId: row.fromWalletId,
+          toWalletId: row.toWalletId,
+          fromAmountDkk: row.fromAmountDkk,
+          toAmountVnd: row.toAmountVnd,
+          effectiveRate: row.effectiveRate.toString(),
+          feeAmount: row.feeAmount,
+          feeCurrency: row.feeCurrency,
+          provider: row.provider,
+          createdAt: row.createdAt.toISOString()
+        })),
+        meta: {
+          walletCount: wallets.length,
+          userCount: users.length,
+          sessionCount: sessions.length,
+          passwordResetRequestCount: passwordResetRequests.length,
+          transactionCount: transactions.length,
+          exchangeCount: exchanges.length
+        }
+      });
+      return;
+    }
+
+    if (req.method === "POST" && url.pathname === "/api/system/restore") {
+      const body = await parseBody(req);
+      if (!body || typeof body !== "object") {
+        sendJson(res, 400, { error: "Invalid request body" });
+        return;
+      }
+
+      const mode = body.mode === "append" ? "append" : "replace";
+      const backupPayload = body.backup && typeof body.backup === "object" ? body.backup : body;
+      const wallets = normalizeWallets(backupPayload.wallets);
+      const users = normalizeUsers(backupPayload.users);
+      const sessions = normalizeSessions(backupPayload.sessions);
+      const passwordResetRequests = normalizePasswordResetRequests(backupPayload.passwordResetRequests);
+      const transactions = normalizeSystemTransactions(backupPayload.transactions);
+      const exchanges = normalizeSystemExchanges(backupPayload.exchanges);
+      const userIds = new Set(users.map((row) => row.id));
+
+      for (const row of sessions) {
+        if (!userIds.has(row.userId)) {
+          sendJson(res, 400, { error: `sessions userId not found: ${row.userId}` });
+          return;
+        }
+      }
+      for (const row of passwordResetRequests) {
+        if (!userIds.has(row.userId)) {
+          sendJson(res, 400, { error: `passwordResetRequests userId not found: ${row.userId}` });
+          return;
+        }
+      }
+      for (const row of transactions) {
+        if (row.userId && !userIds.has(row.userId)) {
+          sendJson(res, 400, { error: `transactions userId not found: ${row.userId}` });
+          return;
+        }
+      }
+      for (const row of exchanges) {
+        if (row.userId && !userIds.has(row.userId)) {
+          sendJson(res, 400, { error: `exchanges userId not found: ${row.userId}` });
+          return;
+        }
+      }
+
+      await prisma.$transaction(async (tx) => {
+        const walletIdMap = new Map();
+        const currencyWalletMap = new Map();
+        const walletRows = wallets.length > 0 ? wallets : [
+          { id: "DKK", name: "Ví DKK", currency: "DKK", createdAt: new Date(), updatedAt: new Date() },
+          { id: "VND", name: "Ví VND", currency: "VND", createdAt: new Date(), updatedAt: new Date() }
+        ];
+
+        for (const row of walletRows) {
+          const saved = await tx.wallet.upsert({
+            where: { currency: row.currency },
+            update: { name: row.name },
+            create: { name: row.name, currency: row.currency }
+          });
+          walletIdMap.set(row.id, saved.id);
+          currencyWalletMap.set(row.currency, saved.id);
+        }
+
+        if (mode === "replace") {
+          await tx.session.deleteMany({});
+          await tx.passwordResetRequest.deleteMany({});
+          await tx.exchange.deleteMany({});
+          await tx.transaction.deleteMany({});
+          await tx.userAllowlist.deleteMany({});
+        }
+
+        if (users.length > 0) {
+          await tx.userAllowlist.createMany({
+            data: users.map((row) => ({
+              id: row.id,
+              displayName: row.displayName,
+              email: row.email,
+              passwordHash: row.passwordHash,
+              note: row.note,
+              status: row.status,
+              createdAt: row.createdAt,
+              updatedAt: row.updatedAt
+            }))
+          });
+        }
+
+        if (transactions.length > 0) {
+          await tx.transaction.createMany({
+            data: transactions.map((row) => ({
+              id: row.id,
+              userId: row.userId,
+              type: row.type,
+              walletId: walletIdMap.get(row.walletId) ?? currencyWalletMap.get(row.currency),
+              amount: row.amount,
+              currency: row.currency,
+              category: row.category,
+              note: row.note,
+              createdAt: row.createdAt
+            }))
+          });
+        }
+
+        if (exchanges.length > 0) {
+          const dkkWalletId = currencyWalletMap.get("DKK");
+          const vndWalletId = currencyWalletMap.get("VND");
+          if (!dkkWalletId || !vndWalletId) {
+            throw new Error("Wallet DKK/VND is missing in backup");
+          }
+          await tx.exchange.createMany({
+            data: exchanges.map((row) => ({
+              id: row.id,
+              userId: row.userId,
+              fromWalletId: walletIdMap.get(row.fromWalletId) ?? dkkWalletId,
+              toWalletId: walletIdMap.get(row.toWalletId) ?? vndWalletId,
+              fromAmountDkk: row.fromAmountDkk,
+              toAmountVnd: row.toAmountVnd,
+              effectiveRate: row.effectiveRate,
+              feeAmount: row.feeAmount,
+              feeCurrency: row.feeCurrency,
+              provider: row.provider,
+              createdAt: row.createdAt
+            }))
+          });
+        }
+
+        if (passwordResetRequests.length > 0) {
+          await tx.passwordResetRequest.createMany({
+            data: passwordResetRequests.map((row) => ({
+              id: row.id,
+              userId: row.userId,
+              newPasswordHash: row.newPasswordHash,
+              status: row.status,
+              createdAt: row.createdAt,
+              reviewedAt: row.reviewedAt
+            }))
+          });
+        }
+
+        if (sessions.length > 0) {
+          await tx.session.createMany({
+            data: sessions.map((row) => ({
+              id: row.id,
+              userId: row.userId,
+              token: row.token,
+              expiresAt: row.expiresAt,
+              createdAt: row.createdAt
+            }))
+          });
+        }
+      });
+
+      sendJson(res, 200, {
+        ok: true,
+        mode,
+        walletCount: wallets.length,
+        userCount: users.length,
+        sessionCount: sessions.length,
+        passwordResetRequestCount: passwordResetRequests.length,
+        transactionCount: transactions.length,
+        exchangeCount: exchanges.length
+      });
       return;
     }
 

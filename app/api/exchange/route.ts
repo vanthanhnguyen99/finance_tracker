@@ -20,6 +20,11 @@ export async function POST(req: NextRequest) {
   const feeAmountMajor = hasFeeAmount ? Number(body.feeAmount) : undefined;
   const feeCurrency = body.feeCurrency as "DKK" | "VND" | undefined;
   const provider = typeof body.provider === "string" ? body.provider : undefined;
+  const createdAtRaw = body.createdAt;
+  const createdAt =
+    typeof createdAtRaw === "string" && createdAtRaw
+      ? new Date(createdAtRaw)
+      : undefined;
 
   if (
     !Number.isFinite(fromAmountMajor) ||
@@ -35,6 +40,9 @@ export async function POST(req: NextRequest) {
   }
   if (feeCurrency && feeCurrency !== "DKK" && feeCurrency !== "VND") {
     return NextResponse.json({ error: "Invalid fee currency" }, { status: 400 });
+  }
+  if (createdAt && Number.isNaN(createdAt.getTime())) {
+    return NextResponse.json({ error: "Invalid createdAt" }, { status: 400 });
   }
 
   const fromWallet = await getWalletByCurrency("DKK");
@@ -72,7 +80,8 @@ export async function POST(req: NextRequest) {
       effectiveRate,
       feeAmount: feeAmountMinor,
       feeCurrency,
-      provider
+      provider,
+      ...(createdAt ? { createdAt } : {})
     }
   });
 
