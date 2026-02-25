@@ -7,6 +7,8 @@ import { LogoutButton } from "../components/LogoutButton";
 import { cookies } from "next/headers";
 import { parseDateInputInTimeZone, resolveTimeZone, TIMEZONE_COOKIE_NAME } from "@/lib/timezone";
 
+export const dynamic = "force-dynamic";
+
 export default async function History({
   searchParams
 }: {
@@ -36,26 +38,54 @@ export default async function History({
       : currency?.toUpperCase() === "VND"
         ? Currency.VND
         : undefined;
+  const normalizedTypeValue = type?.toLowerCase();
+  const includeTransactions = normalizedTypeValue !== "exchange";
+  const includeExchanges = normalizedTypeValue !== "income" && normalizedTypeValue !== "expense";
 
-  const transactionsPromise = prisma.transaction.findMany({
-    where: {
-      userId: user.id,
-      ...(normalizedType ? { type: normalizedType } : {}),
-      ...(normalizedCurrency ? { currency: normalizedCurrency } : {}),
-      ...(createdAt ? { createdAt } : {})
-    },
-    orderBy: { createdAt: "desc" }
-  });
+  const [transactionsResult, exchangesResult] = await Promise.all([
+    includeTransactions
+      ? prisma.transaction.findMany({
+          where: {
+            userId: user.id,
+            ...(normalizedType ? { type: normalizedType } : {}),
+            ...(normalizedCurrency ? { currency: normalizedCurrency } : {}),
+            ...(createdAt ? { createdAt } : {})
+          },
+          orderBy: { createdAt: "desc" },
+          select: {
+            id: true,
+            type: true,
+            createdAt: true,
+            amount: true,
+            currency: true,
+            category: true,
+            note: true,
+            paymentMethod: true
+          }
+        })
+      : Promise.resolve(null),
+    includeExchanges
+      ? prisma.exchange.findMany({
+          where: {
+            userId: user.id,
+            ...(createdAt ? { createdAt } : {})
+          },
+          orderBy: { createdAt: "desc" },
+          select: {
+            id: true,
+            createdAt: true,
+            provider: true,
+            feeAmount: true,
+            feeCurrency: true,
+            fromAmountDkk: true,
+            toAmountVnd: true
+          }
+        })
+      : Promise.resolve(null)
+  ]);
 
-  const exchangesPromise = prisma.exchange.findMany({
-    where: {
-      userId: user.id,
-      ...(createdAt ? { createdAt } : {})
-    },
-    orderBy: { createdAt: "desc" }
-  });
-
-  const [transactions, exchanges] = await Promise.all([transactionsPromise, exchangesPromise]);
+  const transactions = transactionsResult ?? [];
+  const exchanges = exchangesResult ?? [];
 
   const exchangeItems = (type && type !== "exchange") ? [] : exchanges
     .filter((exchange) => {
@@ -93,6 +123,7 @@ export default async function History({
       detail: formatMoney(txn.amount, txn.currency),
       note: txn.note,
       category: txn.category,
+      paymentMethod: txn.paymentMethod,
       currency: txn.currency,
       amountMajor: txn.currency === "DKK" ? txn.amount / 100 : txn.amount
     }));
@@ -100,12 +131,6 @@ export default async function History({
   const items = [...exchangeItems, ...transactionItems].sort((a, b) => {
     return new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime();
   }) as HistoryItem[];
-  const csvParams = new URLSearchParams();
-  if (type) csvParams.set("type", type);
-  if (currency) csvParams.set("currency", currency);
-  if (start) csvParams.set("start", start);
-  if (end) csvParams.set("end", end);
-  const csvHref = `/api/export/csv${csvParams.toString() ? `?${csvParams.toString()}` : ""}`;
 
   return (
     <main className="container-page">
@@ -142,11 +167,8 @@ export default async function History({
             <input className="input" type="date" name="end" defaultValue={end ?? ""} />
           </label>
         </div>
-        <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
+        <div>
           <button className="button" type="submit">Áp dụng bộ lọc</button>
-          <a className="button text-center" href={csvHref}>
-            Xuất CSV
-          </a>
         </div>
       </form>
 

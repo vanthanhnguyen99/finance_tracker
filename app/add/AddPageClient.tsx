@@ -101,6 +101,8 @@ export default function AddPage() {
     const amountMajor = normalizeAmount(data.get("amount"));
     const note = data.get("note");
     const category = data.get("category");
+    const paymentMethodRaw = data.get("paymentMethod");
+    const paymentMethod = typeof paymentMethodRaw === "string" ? paymentMethodRaw : undefined;
     const createdAt = normalizeCreatedAtForApi(logTimeExpanded ? logTimeValue : "");
 
     const res = await fetch("/api/transactions", {
@@ -112,6 +114,7 @@ export default function AddPage() {
         amountMajor,
         note,
         category,
+        ...(type === "EXPENSE" ? { paymentMethod } : {}),
         createdAt
       })
     });
@@ -279,6 +282,10 @@ export default function AddPage() {
             <option value="Gửi về gia đình">Gửi về gia đình</option>
             <option value="Khoản cho mượn">Khoản cho mượn</option>
             <option value="Hoàn trả tiền mượn">Hoàn trả tiền mượn</option>
+          </select>
+          <select className="select" name="paymentMethod" defaultValue="CASH">
+            <option value="CASH">Tiền mặt</option>
+            <option value="CREDIT_CARD">Thẻ tín dụng</option>
           </select>
           <input className="input" name="note" type="text" placeholder="Ghi chú (tuỳ chọn)" />
           {renderLogTimeControl()}

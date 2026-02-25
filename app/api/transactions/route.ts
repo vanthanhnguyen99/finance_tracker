@@ -76,14 +76,27 @@ export async function POST(req: NextRequest) {
   const amountMajor = Number(body.amountMajor);
   const note = typeof body.note === "string" ? body.note : undefined;
   const category = typeof body.category === "string" ? body.category : undefined;
+  const paymentMethodRaw = body.paymentMethod;
+  const paymentMethod =
+    paymentMethodRaw === "CASH" || paymentMethodRaw === "CREDIT_CARD"
+      ? paymentMethodRaw
+      : undefined;
   const createdAtRaw = body.createdAt;
   const createdAt =
     typeof createdAtRaw === "string" && createdAtRaw
       ? new Date(createdAtRaw)
       : undefined;
 
-  if (!type || !currency || !Number.isFinite(amountMajor) || amountMajor <= 0) {
+  if (
+    (type !== "INCOME" && type !== "EXPENSE") ||
+    !currency ||
+    !Number.isFinite(amountMajor) ||
+    amountMajor <= 0
+  ) {
     return NextResponse.json({ error: "Invalid payload" }, { status: 400 });
+  }
+  if (type === "EXPENSE" && paymentMethodRaw !== undefined && !paymentMethod) {
+    return NextResponse.json({ error: "Invalid payment method" }, { status: 400 });
   }
   if (createdAt && Number.isNaN(createdAt.getTime())) {
     return NextResponse.json({ error: "Invalid createdAt" }, { status: 400 });
@@ -110,6 +123,7 @@ export async function POST(req: NextRequest) {
       walletId: wallet.id,
       amount: amountMinor,
       currency,
+      ...(type === "EXPENSE" ? { paymentMethod: paymentMethod ?? "CASH" } : {}),
       category,
       note,
       ...(createdAt ? { createdAt } : {})

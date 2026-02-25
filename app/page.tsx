@@ -120,31 +120,27 @@ export default async function Dashboard({
     : presetTrendPeriods
       ? presetTrendPeriods[0].start
       : previousRange2.start;
-  const exchangeMetricsStart = new Date(
+  const transactionMetricsStart = new Date(
     Math.min(start.getTime(), previousRange.start.getTime(), trendWindowStart.getTime())
   );
+  const exchangeMetricsStart = transactionMetricsStart;
   const dateFormatter = new Intl.DateTimeFormat("vi-VN", {
     timeZone: userTimeZone,
     day: "2-digit",
     month: "2-digit"
   });
   const inputFormatter = new Intl.DateTimeFormat("en-CA", { timeZone: userTimeZone });
+  const rangeLabelFormatter = new Intl.DateTimeFormat("en-GB", {
+    timeZone: userTimeZone,
+    day: "2-digit",
+    month: "2-digit"
+  });
   const periodLabel = `${dateFormatter.format(start)} - ${dateFormatter.format(end)}`;
   const fromDateInput = inputFormatter.format(start);
   const toDateInput = inputFormatter.format(end);
 
-  const formatDateSlash = (value: Date) =>
-    new Intl.DateTimeFormat("en-GB", {
-      timeZone: userTimeZone,
-      day: "2-digit",
-      month: "2-digit"
-    }).format(value);
-  const formatDateDash = (value: Date) =>
-    new Intl.DateTimeFormat("en-GB", {
-      timeZone: userTimeZone,
-      day: "2-digit",
-      month: "2-digit"
-    }).format(value).replace("/", "-");
+  const formatDateSlash = (value: Date) => rangeLabelFormatter.format(value);
+  const formatDateDash = (value: Date) => formatDateSlash(value).replace("/", "-");
   const formatRangeLabel = (rangeStart: Date, rangeEnd: Date) => {
     const startDay = formatDateSlash(rangeStart);
     const endDay = formatDateSlash(rangeEnd);
@@ -153,71 +149,22 @@ export default async function Dashboard({
     return `${formatDateDash(rangeStart)}->${formatDateDash(rangeEnd)}`;
   };
 
-  const [incomeDkk, expenseDkk, expenseVnd, previousIncomeDkk, previousExpenseDkk, periodTransactionsDkk, trendTransactionsDkk, exchangeDkkEntries, balances] = await Promise.all([
+  const [expenseVnd, trendTransactionsDkk, exchangeDkkEntries, balances] = await Promise.all([
     prisma.transaction.aggregate({
       _sum: { amount: true },
       where: {
         userId: user.id,
-        type: "INCOME",
-        currency: "DKK",
-        createdAt: { gte: start, lte: end }
-      }
-    }),
-    prisma.transaction.aggregate({
-      _sum: { amount: true },
-      where: {
-        userId: user.id,
-        type: "EXPENSE",
-        currency: "DKK",
-        createdAt: { gte: start, lte: end }
-      }
-    }),
-    prisma.transaction.aggregate({
-      _sum: { amount: true },
-      where: {
-        userId: user.id,
-        type: "EXPENSE",
         currency: "VND",
+        type: "EXPENSE",
         createdAt: { gte: start, lte: end }
       }
     }),
-    prisma.transaction.aggregate({
-      _sum: { amount: true },
-      where: {
-        userId: user.id,
-        type: "INCOME",
-        currency: "DKK",
-        createdAt: { gte: previousRange.start, lte: previousRange.end }
-      }
-    }),
-    prisma.transaction.aggregate({
-      _sum: { amount: true },
-      where: {
-        userId: user.id,
-        type: "EXPENSE",
-        currency: "DKK",
-        createdAt: { gte: previousRange.start, lte: previousRange.end }
-      }
-    }),
     prisma.transaction.findMany({
       where: {
         userId: user.id,
         currency: "DKK",
-        createdAt: { gte: start, lte: end },
-        OR: [{ type: "INCOME" }, { type: "EXPENSE" }]
-      },
-      select: {
-        type: true,
-        amount: true,
-        createdAt: true
-      }
-    }),
-    prisma.transaction.findMany({
-      where: {
-        userId: user.id,
-        currency: "DKK",
-        createdAt: { gte: trendWindowStart, lte: end },
-        OR: [{ type: "INCOME" }, { type: "EXPENSE" }]
+        createdAt: { gte: transactionMetricsStart, lte: end },
+        type: { in: ["INCOME", "EXPENSE"] }
       },
       select: {
         type: true,
@@ -258,14 +205,29 @@ export default async function Dashboard({
     return sum;
   };
 
-  const totalIncome = incomeDkk._sum.amount ?? 0;
+  const sumDkkTransactionsInRange = (
+    rangeStart: Date,
+    rangeEnd: Date,
+    type: "INCOME" | "EXPENSE"
+  ) => {
+    let sum = 0;
+    for (const entry of trendTransactionsDkk) {
+      if (entry.type !== type) continue;
+      if (entry.createdAt < rangeStart || entry.createdAt > rangeEnd) continue;
+      sum += entry.amount;
+    }
+    return sum;
+  };
+
+  const totalIncome = sumDkkTransactionsInRange(start, end, "INCOME");
   const exchangeExpenseCurrent = sumExchangeDkkInRange(start, end);
-  const totalExpenseDkk = (expenseDkk._sum.amount ?? 0) + exchangeExpenseCurrent;
+  const totalExpenseDkk =
+    sumDkkTransactionsInRange(start, end, "EXPENSE") + exchangeExpenseCurrent;
   const totalExpenseVnd = expenseVnd._sum.amount ?? 0;
   const netDkk = totalIncome - totalExpenseDkk;
-  const previousIncome = previousIncomeDkk._sum.amount ?? 0;
+  const previousIncome = sumDkkTransactionsInRange(previousRange.start, previousRange.end, "INCOME");
   const previousExpense =
-    (previousExpenseDkk._sum.amount ?? 0) +
+    sumDkkTransactionsInRange(previousRange.start, previousRange.end, "EXPENSE") +
     sumExchangeDkkInRange(previousRange.start, previousRange.end);
   const previousNet = previousIncome - previousExpense;
 
@@ -314,7 +276,11 @@ export default async function Dashboard({
     };
   });
 
-  for (const txn of periodTransactionsDkk) {
+  const currentRangeTransactionsDkk = trendTransactionsDkk.filter(
+    (txn) => txn.createdAt >= start && txn.createdAt <= end
+  );
+
+  for (const txn of currentRangeTransactionsDkk) {
     const bucket = trendBuckets.find(
       (item) => txn.createdAt >= item.start && txn.createdAt <= item.end
     );
@@ -412,7 +378,7 @@ export default async function Dashboard({
     };
   });
 
-  for (const txn of periodTransactionsDkk) {
+  for (const txn of currentRangeTransactionsDkk) {
     const bucket = cycleBuckets.find(
       (item) => txn.createdAt >= item.start && txn.createdAt <= item.end
     );
@@ -527,17 +493,22 @@ export default async function Dashboard({
     const date = new Date(now.getFullYear(), now.getMonth() - (3 - index), 1);
     return date;
   });
-  const monthLabels = monthStarts.map((date) =>
-    new Intl.DateTimeFormat("en-GB", { month: "short" }).format(date)
-  );
+  const monthLabelFormatter = new Intl.DateTimeFormat("en-GB", { month: "short" });
+  const monthLabels = monthStarts.map((date) => monthLabelFormatter.format(date));
   const monthEnd = new Date(now.getFullYear(), now.getMonth() + 1, 1);
 
   const [monthlyTransactions, monthlyExchanges] = await Promise.all([
     prisma.transaction.findMany({
       where: {
         userId: user.id,
+        type: { in: ["INCOME", "EXPENSE"] },
         currency: "DKK",
         createdAt: { gte: monthStarts[0], lt: monthEnd }
+      },
+      select: {
+        type: true,
+        amount: true,
+        createdAt: true
       }
     }),
     prisma.exchange.findMany({

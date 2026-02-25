@@ -24,8 +24,12 @@ export function BottomNav() {
   ) {
     if (href !== "/" && href !== "/history") return;
     event.preventDefault();
-    router.push(`${href}?refresh=${Date.now()}`);
-    router.refresh();
+    const target = `${href}?refresh=${Date.now()}`;
+    if (pathname === href) {
+      router.replace(target, { scroll: false });
+      return;
+    }
+    router.push(target, { scroll: false });
   }
 
   return (

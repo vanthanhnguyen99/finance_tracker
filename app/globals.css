@@ -58,7 +58,8 @@ body {
 }
 
 .bottom-nav-item {
-  @apply justify-self-center rounded-full px-4 py-3 text-center text-base;
+  @apply inline-flex w-full min-h-12 items-center justify-center justify-self-center rounded-2xl px-2 py-3 text-center text-base font-semibold;
+  touch-action: manipulation;
 }
 
 .bottom-nav-item-active {

@@ -13,6 +13,7 @@ export type HistoryItem =
       detail: string;
       note?: string | null;
       category?: string | null;
+      paymentMethod?: "CASH" | "CREDIT_CARD" | null;
       currency: "DKK" | "VND";
       amountMajor: number;
     }
@@ -34,6 +35,10 @@ function formatDate(date: string) {
     dateStyle: "medium",
     timeStyle: "short"
   }).format(new Date(date));
+}
+
+function paymentMethodLabel(value: "CASH" | "CREDIT_CARD" | null | undefined) {
+  return value === "CREDIT_CARD" ? "Thẻ tín dụng" : "Tiền mặt";
 }
 
 export function HistoryList({ items }: { items: HistoryItem[] }) {
@@ -73,6 +78,8 @@ export function HistoryList({ items }: { items: HistoryItem[] }) {
     const note = data.get("note");
     const category = data.get("category");
     const currency = data.get("currency");
+    const paymentMethodRaw = data.get("paymentMethod");
+    const paymentMethod = typeof paymentMethodRaw === "string" ? paymentMethodRaw : undefined;
     setSaving(true);
     const res = await fetch(`/api/transactions/${item.id}`, {
       method: "PATCH",
@@ -81,7 +88,8 @@ export function HistoryList({ items }: { items: HistoryItem[] }) {
         amountMajor,
         note,
         category,
-        currency
+        currency,
+        ...(item.type === "EXPENSE" ? { paymentMethod } : {})
       })
     });
     setSaving(false);
@@ -247,6 +255,15 @@ export function HistoryList({ items }: { items: HistoryItem[] }) {
                               </select>
                             )}
                           </label>
+                          {item.type === "EXPENSE" ? (
+                            <label className="grid gap-1 text-[10px] uppercase tracking-wide text-slate-400">
+                              Thanh toán
+                              <select className="select" name="paymentMethod" defaultValue={item.paymentMethod ?? "CASH"}>
+                                <option value="CASH">Tiền mặt</option>
+                                <option value="CREDIT_CARD">Thẻ tín dụng</option>
+                              </select>
+                            </label>
+                          ) : null}
                           <label className="grid gap-1 text-[10px] uppercase tracking-wide text-slate-400">
                             Ghi chú
                             <input className="input" name="note" defaultValue={item.note ?? ""} />
@@ -272,6 +289,9 @@ export function HistoryList({ items }: { items: HistoryItem[] }) {
                     <div className="grid gap-2">
                       {"category" in item && item.category ? (
                         <div><span className="font-semibold text-slate-400">Danh mục:</span> {item.category}</div>
+                      ) : null}
+                      {item.type === "EXPENSE" && "paymentMethod" in item ? (
+                        <div><span className="font-semibold text-slate-400">Thanh toán:</span> {paymentMethodLabel(item.paymentMethod)}</div>
                       ) : null}
                       {"note" in item && item.note ? (
                         <div><span className="font-semibold text-slate-400">Ghi chú:</span> {item.note}</div>

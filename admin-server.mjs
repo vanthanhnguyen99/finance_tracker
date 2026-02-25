@@ -14,6 +14,7 @@ const allowedStatuses = new Set(["PENDING", "ACTIVE", "DISABLED", "REJECTED"]);
 const allowedPasswordResetStatuses = new Set(["PENDING", "APPROVED", "REJECTED"]);
 const allowedTransactionTypes = new Set(["INCOME", "EXPENSE", "EXCHANGE"]);
 const allowedCurrencies = new Set(["DKK", "VND"]);
+const allowedPaymentMethods = new Set(["CASH", "CREDIT_CARD"]);
 const mutationRateStore = new Map();
 
 function sendJson(res, status, payload) {
@@ -217,10 +218,15 @@ function normalizeSystemTransactions(records) {
     const walletId = String(row.walletId ?? "").trim();
     const currency = String(row.currency ?? "");
     const userIdRaw = row.userId == null ? null : String(row.userId).trim();
+    const paymentMethodRaw = row.paymentMethod == null ? null : String(row.paymentMethod);
     if (!id) throw new Error(`transactions[${index}].id is required`);
     if (!allowedTransactionTypes.has(type)) throw new Error(`transactions[${index}].type is invalid`);
     if (!walletId) throw new Error(`transactions[${index}].walletId is required`);
     if (!allowedCurrencies.has(currency)) throw new Error(`transactions[${index}].currency is invalid`);
+    if (paymentMethodRaw !== null && !allowedPaymentMethods.has(paymentMethodRaw)) {
+      throw new Error(`transactions[${index}].paymentMethod is invalid`);
+    }
+    const paymentMethod = paymentMethodRaw ?? (type === "EXPENSE" ? "CASH" : null);
     return {
       id,
       userId: userIdRaw || null,
@@ -228,6 +234,7 @@ function normalizeSystemTransactions(records) {
       walletId,
       amount: parseInteger(row.amount, `transactions[${index}].amount`),
       currency,
+      paymentMethod,
       category: row.category == null ? null : String(row.category),
       note: row.note == null ? null : String(row.note),
       createdAt: parseIsoDate(row.createdAt, `transactions[${index}].createdAt`)
@@ -821,6 +828,7 @@ const server = http.createServer(async (req, res) => {
           walletId: row.walletId,
           amount: row.amount,
           currency: row.currency,
+          paymentMethod: row.paymentMethod,
           category: row.category,
           note: row.note,
           createdAt: row.createdAt.toISOString()
@@ -942,6 +950,7 @@ const server = http.createServer(async (req, res) => {
               walletId: walletIdMap.get(row.walletId) ?? currencyWalletMap.get(row.currency),
               amount: row.amount,
               currency: row.currency,
+              paymentMethod: row.paymentMethod,
               category: row.category,
               note: row.note,
               createdAt: row.createdAt

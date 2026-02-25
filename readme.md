@@ -7,7 +7,7 @@
 ## 1. Tính năng chính (đã triển khai)
 
 - **Thu nhập**: hỗ trợ DKK/VND, có danh mục và ghi chú.
-- **Chi tiêu**: hỗ trợ DKK/VND, danh mục cố định, ghi chú.
+- **Chi tiêu**: hỗ trợ DKK/VND, danh mục cố định, ghi chú, phương thức thanh toán (mặc định tiền mặt, tùy chọn thẻ tín dụng).
 - **Đổi tiền (DKK → VND)**: nhập số DKK đổi, số VND nhận, phí (DKK), hệ thống tự tính tỷ giá.
 - **Dashboard**:
   - Filter thời gian: Hôm nay / Tuần này / Tháng này / 7 ngày / 30 ngày
@@ -21,10 +21,9 @@
   - Monthly overview 4 tháng gần nhất (DKK)
 - **Lịch sử giao dịch**:
   - Filter theo loại, tiền tệ, khoảng thời gian
-  - Click để xem chi tiết (note, category, provider, fee)
+  - Click để xem chi tiết (note, category, payment method, provider, fee)
   - Sửa / xóa giao dịch
   - Sửa Exchange: DKK đổi, VND nhận, phí (DKK)
-  - Xuất CSV theo bộ lọc hiện tại
 - **Đăng xuất**:
   - Có nút `Đăng xuất` rõ ràng ở các màn chính (Tổng quan / Thêm / Lịch sử)
 - **Quên mật khẩu (cần admin duyệt)**:
@@ -77,6 +76,7 @@
 - walletId
 - amount (minor units)
 - currency
+- paymentMethod (optional: CASH | CREDIT_CARD, dùng cho chi tiêu)
 - category (optional)
 - note (optional)
 - createdAt
@@ -98,7 +98,7 @@
 ## 5. Quy tắc nghiệp vụ
 
 - **Income**: cộng vào ví theo currency.
-- **Expense**: trừ khỏi ví, kiểm tra đủ số dư.
+- **Expense**: trừ khỏi ví, kiểm tra đủ số dư; phương thức thanh toán mặc định là `CASH`, có thể chọn `CREDIT_CARD`.
 - **Exchange**: trừ DKK, cộng VND, lưu tỷ giá.
 - **Fee**: hiện tại xử lý phí theo DKK (khi edit exchange).
 
@@ -108,6 +108,7 @@
 
 - Mobile‑first, thao tác 1 chạm
 - Bottom nav: Tổng quan / Thêm / Lịch sử
+- Tăng vùng chạm cho nút `Tổng quan` và `Lịch sử` trên bottom nav để thao tác tốt hơn trên iOS Safari
 - Input tiền có format dấu phẩy khi nhập
 - Thông báo lưu thành công màu xanh và tự ẩn sau 5s
 - Logo custom: “Compass + Lightning + Coin Orbit”
@@ -245,8 +246,13 @@ cat backup.sql | docker compose exec -T db psql -U "$POSTGRES_USER" "$POSTGRES_D
 - Lưu tiền dạng integer (minor units): DKK = øre (×100), VND = nguyên.
 - Các API `transactions`/`exchange` hỗ trợ create/update/delete.
 - Dashboard dùng `noStore()` để luôn hiển thị dữ liệu mới.
+- Điều hướng tab `/` và `/history` dùng query `refresh` để luôn lấy dữ liệu mới khi chuyển tab.
 - Sau khi sửa/xóa transaction hoặc exchange, hệ thống `revalidatePath("/")` và `revalidatePath("/history")` để tránh stale data khi quay lại Tổng quan.
-- Thêm API export CSV: `GET /api/export/csv` (có auth, hỗ trợ filter `type/currency/start/end`).
+- API export CSV vẫn khả dụng: `GET /api/export/csv` (có auth, hỗ trợ filter `type/currency/start/end`).
+- Tối ưu hiệu năng truy vấn:
+  - Tính số dư ví bằng aggregate DB (không scan toàn bộ giao dịch/exchange trong app layer).
+  - Giảm số query trùng ở Dashboard và thu gọn payload `select` ở Dashboard/Lịch sử.
+  - Thêm index `Transaction_userId_type_currency_createdAt_idx` cho pattern lọc phổ biến.
 - Timezone:
   - Hệ thống lấy timezone theo thiết bị người dùng (sync qua cookie `finance_tz`).
   - Áp dụng cho filter ngày ở Tổng quan/Lịch sử/API (`dashboard`, `transactions`, `export csv`) để tránh lệch ngày do UTC.

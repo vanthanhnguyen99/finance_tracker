@@ -82,6 +82,7 @@ export async function GET(req: NextRequest) {
       "amount",
       "category",
       "note",
+      "paymentMethod",
       "detail",
       "provider",
       "fee"
@@ -105,6 +106,7 @@ export async function GET(req: NextRequest) {
           escapeCsv(amount),
           escapeCsv(txn.category),
           escapeCsv(txn.note),
+          escapeCsv(txn.paymentMethod),
           "",
           "",
           ""
@@ -124,6 +126,7 @@ export async function GET(req: NextRequest) {
         "EXCHANGE",
         "DKK->VND",
         escapeCsv(exchange.fromAmountDkk / 100),
+        "",
         "",
         "",
         escapeCsv(`${exchange.fromAmountDkk / 100} DKK -> ${exchange.toAmountVnd} VND`),

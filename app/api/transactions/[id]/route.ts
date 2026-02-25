@@ -21,12 +21,20 @@ export async function PATCH(
   const note = typeof body.note === "string" ? body.note : null;
   const category = typeof body.category === "string" ? body.category : null;
   const currency = body.currency as "DKK" | "VND" | undefined;
+  const paymentMethodRaw = body.paymentMethod;
+  const paymentMethod =
+    paymentMethodRaw === "CASH" || paymentMethodRaw === "CREDIT_CARD"
+      ? paymentMethodRaw
+      : undefined;
 
   if (!Number.isFinite(amountMajor) || amountMajor <= 0) {
     return NextResponse.json({ error: "Invalid amount" }, { status: 400 });
   }
   if (currency && currency !== "DKK" && currency !== "VND") {
     return NextResponse.json({ error: "Invalid currency" }, { status: 400 });
+  }
+  if (paymentMethodRaw !== undefined && !paymentMethod) {
+    return NextResponse.json({ error: "Invalid payment method" }, { status: 400 });
   }
 
   const { id } = await params;
@@ -56,7 +64,10 @@ export async function PATCH(
       amount: newAmount,
       currency: nextCurrency,
       note,
-      category
+      category,
+      ...(txn.type === "EXPENSE"
+        ? { paymentMethod: paymentMethod ?? txn.paymentMethod ?? "CASH" }
+        : {})
     }
   });
   revalidatePath("/");

@@ -27,34 +27,45 @@ export async function ensureWallets() {
 
 export async function getWalletBalances(userId: string) {
   const wallets = await ensureWallets();
-  const transactions = await prisma.transaction.findMany({
-    where: { userId }
-  });
-  const exchanges = await prisma.exchange.findMany({
-    where: { userId }
-  });
+  const [transactionSums, exchangeSums, exchangeFeeDkk, exchangeFeeVnd] = await Promise.all([
+    prisma.transaction.groupBy({
+      by: ["currency", "type"],
+      where: {
+        userId,
+        type: { in: ["INCOME", "EXPENSE"] }
+      },
+      _sum: { amount: true }
+    }),
+    prisma.exchange.aggregate({
+      where: { userId },
+      _sum: {
+        fromAmountDkk: true,
+        toAmountVnd: true
+      }
+    }),
+    prisma.exchange.aggregate({
+      where: { userId, feeCurrency: "DKK" },
+      _sum: { feeAmount: true }
+    }),
+    prisma.exchange.aggregate({
+      where: { userId, feeCurrency: "VND" },
+      _sum: { feeAmount: true }
+    })
+  ]);
 
   const balances = {
     DKK: 0,
     VND: 0
   };
 
-  for (const txn of transactions) {
-    if (txn.type === "INCOME") {
-      balances[txn.currency] += txn.amount;
-    }
-    if (txn.type === "EXPENSE") {
-      balances[txn.currency] -= txn.amount;
-    }
+  for (const row of transactionSums) {
+    const amount = row._sum.amount ?? 0;
+    if (row.type === "INCOME") balances[row.currency] += amount;
+    if (row.type === "EXPENSE") balances[row.currency] -= amount;
   }
 
-  for (const ex of exchanges) {
-    balances.DKK -= ex.fromAmountDkk;
-    balances.VND += ex.toAmountVnd;
-    if (ex.feeAmount && ex.feeCurrency) {
-      balances[ex.feeCurrency] -= ex.feeAmount;
-    }
-  }
+  balances.DKK -= (exchangeSums._sum.fromAmountDkk ?? 0) + (exchangeFeeDkk._sum.feeAmount ?? 0);
+  balances.VND += (exchangeSums._sum.toAmountVnd ?? 0) - (exchangeFeeVnd._sum.feeAmount ?? 0);
 
   return {
     wallets,
