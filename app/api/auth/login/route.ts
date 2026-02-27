@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { prisma } from "@/lib/db";
-import { createSession, verifyPassword } from "@/lib/auth";
+import { createSession, hashPassword, isCurrentPasswordHash, verifyPassword } from "@/lib/auth";
 import { SESSION_COOKIE_NAME } from "@/lib/session-constants";
 import { checkRateLimit, getClientIp } from "@/lib/rate-limit";
 
@@ -51,6 +51,15 @@ export async function POST(req: NextRequest) {
 
   if (!verifyPassword(password, user.passwordHash)) {
     return NextResponse.json({ error: "Email hoặc mật khẩu không đúng" }, { status: 401 });
+  }
+
+  if (!isCurrentPasswordHash(user.passwordHash)) {
+    await prisma.userAllowlist
+      .update({
+        where: { id: user.id },
+        data: { passwordHash: hashPassword(password) }
+      })
+      .catch(() => undefined);
   }
 
   const { token, expiresAt } = await createSession(user.id);

@@ -98,7 +98,10 @@
 ## 5. Quy tắc nghiệp vụ
 
 - **Income**: cộng vào ví theo currency.
-- **Expense**: trừ khỏi ví, kiểm tra đủ số dư; phương thức thanh toán mặc định là `CASH`, có thể chọn `CREDIT_CARD`.
+- **Expense**:
+  - Nếu `paymentMethod = CASH`: trừ khỏi ví, kiểm tra đủ số dư.
+  - Nếu `paymentMethod = CREDIT_CARD`: ghi nhận chi tiêu thực tế nhưng **không trừ ví ngay**.
+  - Giao dịch trả thẻ (danh mục `Tín dụng`, không phải `CREDIT_CARD`) chỉ dùng để giảm ví, **không cộng thêm vào thống kê chi tiêu** để tránh double count.
 - **Exchange**: trừ DKK, cộng VND, lưu tỷ giá.
 - **Fee**: hiện tại xử lý phí theo DKK (khi edit exchange).
 

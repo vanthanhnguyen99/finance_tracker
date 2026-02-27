@@ -9,6 +9,7 @@ import { unstable_noStore as noStore } from "next/cache";
 import { requireActivePageSession } from "@/lib/server-auth";
 import { LogoutButton } from "./components/LogoutButton";
 import { cookies } from "next/headers";
+import { isCreditCardRepayment } from "@/lib/credit";
 import {
   getDateInTimeZone,
   parseDateInputInTimeZone,
@@ -149,16 +150,7 @@ export default async function Dashboard({
     return `${formatDateDash(rangeStart)}->${formatDateDash(rangeEnd)}`;
   };
 
-  const [expenseVnd, trendTransactionsDkk, exchangeDkkEntries, balances] = await Promise.all([
-    prisma.transaction.aggregate({
-      _sum: { amount: true },
-      where: {
-        userId: user.id,
-        currency: "VND",
-        type: "EXPENSE",
-        createdAt: { gte: start, lte: end }
-      }
-    }),
+  const [trendTransactionsDkk, exchangeDkkEntries, balances] = await Promise.all([
     prisma.transaction.findMany({
       where: {
         userId: user.id,
@@ -169,7 +161,9 @@ export default async function Dashboard({
       select: {
         type: true,
         amount: true,
-        createdAt: true
+        createdAt: true,
+        category: true,
+        paymentMethod: true
       }
     }),
     prisma.exchange.findMany({
@@ -214,6 +208,9 @@ export default async function Dashboard({
     for (const entry of trendTransactionsDkk) {
       if (entry.type !== type) continue;
       if (entry.createdAt < rangeStart || entry.createdAt > rangeEnd) continue;
+      if (type === "EXPENSE" && isCreditCardRepayment(entry.category, entry.paymentMethod)) {
+        continue;
+      }
       sum += entry.amount;
     }
     return sum;
@@ -223,7 +220,6 @@ export default async function Dashboard({
   const exchangeExpenseCurrent = sumExchangeDkkInRange(start, end);
   const totalExpenseDkk =
     sumDkkTransactionsInRange(start, end, "EXPENSE") + exchangeExpenseCurrent;
-  const totalExpenseVnd = expenseVnd._sum.amount ?? 0;
   const netDkk = totalIncome - totalExpenseDkk;
   const previousIncome = sumDkkTransactionsInRange(previousRange.start, previousRange.end, "INCOME");
   const previousExpense =
@@ -286,7 +282,9 @@ export default async function Dashboard({
     );
     if (!bucket) continue;
     if (txn.type === "INCOME") bucket.income += txn.amount;
-    if (txn.type === "EXPENSE") bucket.expense += txn.amount;
+    if (txn.type === "EXPENSE" && !isCreditCardRepayment(txn.category, txn.paymentMethod)) {
+      bucket.expense += txn.amount;
+    }
   }
 
   const customTrendData = trendBuckets.map((bucket) => {
@@ -306,7 +304,9 @@ export default async function Dashboard({
     for (const txn of trendTransactionsDkk) {
       if (txn.createdAt < period.start || txn.createdAt > period.end) continue;
       if (txn.type === "INCOME") income += txn.amount;
-      if (txn.type === "EXPENSE") expense += txn.amount;
+      if (txn.type === "EXPENSE" && !isCreditCardRepayment(txn.category, txn.paymentMethod)) {
+        expense += txn.amount;
+      }
     }
     return {
       ...period,
@@ -383,7 +383,9 @@ export default async function Dashboard({
       (item) => txn.createdAt >= item.start && txn.createdAt <= item.end
     );
     if (!bucket) continue;
-    if (txn.type === "EXPENSE") bucket.expense += txn.amount;
+    if (txn.type === "EXPENSE" && !isCreditCardRepayment(txn.category, txn.paymentMethod)) {
+      bucket.expense += txn.amount;
+    }
   }
 
   const inCycleData = cycleBuckets.map((bucket) => ({
@@ -420,6 +422,18 @@ export default async function Dashboard({
     1
   );
 
+  const creditRepaymentFilter = {
+    AND: [
+      {
+        OR: [
+          { category: { equals: "Tín dụng", mode: "insensitive" as const } },
+          { category: { equals: "Tin dung", mode: "insensitive" as const } }
+        ]
+      },
+      { paymentMethod: { not: "CREDIT_CARD" as const } }
+    ]
+  };
+
   const [expenseByCategory, uncategorized] = await Promise.all([
     prisma.transaction.groupBy({
       by: ["category"],
@@ -428,6 +442,7 @@ export default async function Dashboard({
         userId: user.id,
         type: "EXPENSE",
         currency: expenseCurrency,
+        NOT: creditRepaymentFilter,
         AND: [{ category: { not: null } }, { category: { not: "" } }],
         createdAt: { gte: start, lte: end }
       },
@@ -441,6 +456,7 @@ export default async function Dashboard({
         userId: user.id,
         type: "EXPENSE",
         currency: expenseCurrency,
+        NOT: creditRepaymentFilter,
         OR: [{ category: null }, { category: "" }],
         createdAt: { gte: start, lte: end }
       }
@@ -508,7 +524,9 @@ export default async function Dashboard({
       select: {
         type: true,
         amount: true,
-        createdAt: true
+        createdAt: true,
+        category: true,
+        paymentMethod: true
       }
     }),
     prisma.exchange.findMany({
@@ -536,7 +554,9 @@ export default async function Dashboard({
     );
     if (monthIndex === -1) continue;
     if (txn.type === "INCOME") monthlyIncome[monthIndex] += txn.amount;
-    if (txn.type === "EXPENSE") monthlyExpense[monthIndex] += txn.amount;
+    if (txn.type === "EXPENSE" && !isCreditCardRepayment(txn.category, txn.paymentMethod)) {
+      monthlyExpense[monthIndex] += txn.amount;
+    }
   }
 
   for (const exchange of monthlyExchanges) {

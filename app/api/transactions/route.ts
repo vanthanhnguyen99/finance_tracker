@@ -4,6 +4,7 @@ import { getWalletByCurrency, getWalletBalances } from "@/lib/wallet";
 import { toMinor } from "@/lib/money";
 import { getApiSessionUser } from "@/lib/auth";
 import { getTimeZoneFromRequest, parseDateInputInTimeZone } from "@/lib/timezone";
+import { expenseAffectsWallet, normalizePaymentMethod } from "@/lib/credit";
 
 export const dynamic = "force-dynamic";
 
@@ -77,10 +78,8 @@ export async function POST(req: NextRequest) {
   const note = typeof body.note === "string" ? body.note : undefined;
   const category = typeof body.category === "string" ? body.category : undefined;
   const paymentMethodRaw = body.paymentMethod;
-  const paymentMethod =
-    paymentMethodRaw === "CASH" || paymentMethodRaw === "CREDIT_CARD"
-      ? paymentMethodRaw
-      : undefined;
+  const paymentMethod = normalizePaymentMethod(paymentMethodRaw);
+  const resolvedExpensePaymentMethod = type === "EXPENSE" ? paymentMethod ?? "CASH" : undefined;
   const createdAtRaw = body.createdAt;
   const createdAt =
     typeof createdAtRaw === "string" && createdAtRaw
@@ -109,7 +108,7 @@ export async function POST(req: NextRequest) {
 
   const amountMinor = toMinor(amountMajor, currency);
 
-  if (type === "EXPENSE") {
+  if (type === "EXPENSE" && expenseAffectsWallet(resolvedExpensePaymentMethod)) {
     const { balances } = await getWalletBalances(user.id);
     if (balances[currency] < amountMinor) {
       return NextResponse.json({ error: "Insufficient balance" }, { status: 400 });
@@ -123,7 +122,7 @@ export async function POST(req: NextRequest) {
       walletId: wallet.id,
       amount: amountMinor,
       currency,
-      ...(type === "EXPENSE" ? { paymentMethod: paymentMethod ?? "CASH" } : {}),
+      ...(type === "EXPENSE" ? { paymentMethod: resolvedExpensePaymentMethod } : {}),
       category,
       note,
       ...(createdAt ? { createdAt } : {})

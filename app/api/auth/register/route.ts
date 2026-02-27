@@ -4,6 +4,7 @@ import { hashPassword } from "@/lib/auth";
 import { checkRateLimit, getClientIp } from "@/lib/rate-limit";
 
 export const dynamic = "force-dynamic";
+const MIN_PASSWORD_LENGTH = 6;
 
 export async function POST(req: NextRequest) {
   const body = await req.json();
@@ -34,8 +35,11 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: "Email không hợp lệ" }, { status: 400 });
   }
 
-  if (password.length < 6) {
-    return NextResponse.json({ error: "Mật khẩu phải từ 6 ký tự" }, { status: 400 });
+  if (password.length < MIN_PASSWORD_LENGTH) {
+    return NextResponse.json(
+      { error: `Mật khẩu phải từ ${MIN_PASSWORD_LENGTH} ký tự` },
+      { status: 400 }
+    );
   }
 
   const existing = await prisma.userAllowlist.findFirst({ where: { email } });

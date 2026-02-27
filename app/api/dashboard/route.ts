@@ -33,6 +33,18 @@ export async function GET(req: NextRequest) {
     ? { start: fromDate!, end: toDate! }
     : getRange(filter, userTimeZone);
 
+  const creditRepaymentFilter = {
+    AND: [
+      {
+        OR: [
+          { category: { equals: "Tín dụng", mode: "insensitive" as const } },
+          { category: { equals: "Tin dung", mode: "insensitive" as const } }
+        ]
+      },
+      { paymentMethod: { not: "CREDIT_CARD" as const } }
+    ]
+  };
+
   const [incomeDkk, expenseDkk, expenseVnd] = await Promise.all([
     prisma.transaction.aggregate({
       _sum: { amount: true },
@@ -49,6 +61,7 @@ export async function GET(req: NextRequest) {
         userId: user.id,
         type: "EXPENSE",
         currency: "DKK",
+        NOT: creditRepaymentFilter,
         createdAt: { gte: start, lte: end }
       }
     }),
@@ -58,6 +71,7 @@ export async function GET(req: NextRequest) {
         userId: user.id,
         type: "EXPENSE",
         currency: "VND",
+        NOT: creditRepaymentFilter,
         createdAt: { gte: start, lte: end }
       }
     })

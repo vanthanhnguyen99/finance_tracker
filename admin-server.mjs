@@ -5,10 +5,19 @@ import { PrismaClient } from "@prisma/client";
 
 const prisma = new PrismaClient();
 const port = Number(process.env.ADMIN_PORT ?? 3000);
-const HASH_SCHEME = "md5scrypt_v1";
+const HASH_SCHEME = "scrypt_v2";
 const ADMIN_MUTATION_LIMIT = 120;
 const ADMIN_MUTATION_WINDOW_MS = 60 * 60 * 1000;
 const ADMIN_BODY_LIMIT_BYTES = 10 * 1024 * 1024;
+const BASE_SECURITY_HEADERS = {
+  "Cache-Control": "no-store",
+  "X-Frame-Options": "DENY",
+  "X-Content-Type-Options": "nosniff",
+  "Referrer-Policy": "no-referrer",
+  "Permissions-Policy": "camera=(), microphone=(), geolocation=()"
+};
+const ADMIN_CSP =
+  "default-src 'self'; img-src 'self' data: blob:; style-src 'self' 'unsafe-inline'; script-src 'self' 'unsafe-inline'; connect-src 'self'; frame-ancestors 'none'; base-uri 'none'; form-action 'self'";
 
 const allowedStatuses = new Set(["PENDING", "ACTIVE", "DISABLED", "REJECTED"]);
 const allowedPasswordResetStatuses = new Set(["PENDING", "APPROVED", "REJECTED"]);
@@ -18,12 +27,19 @@ const allowedPaymentMethods = new Set(["CASH", "CREDIT_CARD"]);
 const mutationRateStore = new Map();
 
 function sendJson(res, status, payload) {
-  res.writeHead(status, { "Content-Type": "application/json; charset=utf-8" });
+  res.writeHead(status, {
+    ...BASE_SECURITY_HEADERS,
+    "Content-Type": "application/json; charset=utf-8"
+  });
   res.end(JSON.stringify(payload));
 }
 
 function sendHtml(res, html) {
-  res.writeHead(200, { "Content-Type": "text/html; charset=utf-8" });
+  res.writeHead(200, {
+    ...BASE_SECURITY_HEADERS,
+    "Content-Type": "text/html; charset=utf-8",
+    "Content-Security-Policy": ADMIN_CSP
+  });
   res.end(html);
 }
 
@@ -47,32 +63,52 @@ function isAuthorized(req) {
 
 async function parseBody(req) {
   return new Promise((resolve, reject) => {
-    let data = "";
+    const chunks = [];
+    let totalBytes = 0;
+    let finished = false;
+
+    const finishReject = (error) => {
+      if (finished) return;
+      finished = true;
+      reject(error);
+    };
+
+    const finishResolve = (value) => {
+      if (finished) return;
+      finished = true;
+      resolve(value);
+    };
+
     req.on("data", (chunk) => {
-      data += chunk;
-      if (data.length > ADMIN_BODY_LIMIT_BYTES) {
-        reject(new Error("Payload too large"));
+      const buffer = Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk);
+      totalBytes += buffer.length;
+      if (totalBytes > ADMIN_BODY_LIMIT_BYTES) {
+        req.destroy();
+        finishReject(new Error("Payload too large"));
+        return;
       }
+      chunks.push(buffer);
     });
     req.on("end", () => {
-      if (!data) {
-        resolve({});
+      if (finished) return;
+      if (!chunks.length) {
+        finishResolve({});
         return;
       }
       try {
-        resolve(JSON.parse(data));
+        const data = Buffer.concat(chunks).toString("utf8");
+        finishResolve(JSON.parse(data));
       } catch {
-        reject(new Error("Invalid JSON"));
+        finishReject(new Error("Invalid JSON"));
       }
     });
-    req.on("error", reject);
+    req.on("error", finishReject);
   });
 }
 
 function hashPassword(password) {
-  const md5 = crypto.createHash("md5").update(password, "utf8").digest("hex");
   const salt = crypto.randomBytes(16).toString("hex");
-  const hash = crypto.scryptSync(md5, salt, 64).toString("hex");
+  const hash = crypto.scryptSync(password, salt, 64).toString("hex");
   return `${HASH_SCHEME}:${salt}:${hash}`;
 }
 
@@ -722,7 +758,7 @@ function appHtml() {
 
 const server = http.createServer(async (req, res) => {
   try {
-    const url = new URL(req.url ?? "/", `http://${req.headers.host}`);
+    const url = new URL(req.url ?? "/", "http://localhost");
 
     if (url.pathname === "/") {
       sendHtml(res, appHtml());

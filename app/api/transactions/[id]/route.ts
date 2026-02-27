@@ -4,6 +4,7 @@ import { toMinor } from "@/lib/money";
 import { getWalletBalances } from "@/lib/wallet";
 import { getApiSessionUser } from "@/lib/auth";
 import { revalidatePath } from "next/cache";
+import { expenseAffectsWallet, normalizePaymentMethod } from "@/lib/credit";
 
 export const dynamic = "force-dynamic";
 
@@ -22,10 +23,7 @@ export async function PATCH(
   const category = typeof body.category === "string" ? body.category : null;
   const currency = body.currency as "DKK" | "VND" | undefined;
   const paymentMethodRaw = body.paymentMethod;
-  const paymentMethod =
-    paymentMethodRaw === "CASH" || paymentMethodRaw === "CREDIT_CARD"
-      ? paymentMethodRaw
-      : undefined;
+  const paymentMethod = normalizePaymentMethod(paymentMethodRaw);
 
   if (!Number.isFinite(amountMajor) || amountMajor <= 0) {
     return NextResponse.json({ error: "Invalid amount" }, { status: 400 });
@@ -48,12 +46,21 @@ export async function PATCH(
 
   const nextCurrency = currency ?? txn.currency;
   const newAmount = toMinor(amountMajor, nextCurrency);
+  const nextPaymentMethod =
+    txn.type === "EXPENSE" ? paymentMethod ?? txn.paymentMethod ?? "CASH" : undefined;
 
   if (txn.type === "EXPENSE") {
     const { balances } = await getWalletBalances(user.id);
-    const available = balances[txn.currency] + txn.amount; // add back original amount
-    const effectiveAvailable = nextCurrency === txn.currency ? available : balances[nextCurrency];
-    if (effectiveAvailable < newAmount) {
+    const simulatedBalances = { ...balances };
+
+    if (expenseAffectsWallet(txn.paymentMethod)) {
+      simulatedBalances[txn.currency] += txn.amount;
+    }
+    if (expenseAffectsWallet(nextPaymentMethod)) {
+      simulatedBalances[nextCurrency] -= newAmount;
+    }
+
+    if (simulatedBalances[nextCurrency] < 0) {
       return NextResponse.json({ error: "Insufficient balance" }, { status: 400 });
     }
   }
@@ -66,7 +73,7 @@ export async function PATCH(
       note,
       category,
       ...(txn.type === "EXPENSE"
-        ? { paymentMethod: paymentMethod ?? txn.paymentMethod ?? "CASH" }
+        ? { paymentMethod: nextPaymentMethod }
         : {})
     }
   });

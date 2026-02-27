@@ -1,4 +1,5 @@
 import { prisma } from "./db";
+import { expenseAffectsWallet } from "./credit";
 
 export async function ensureWallets() {
   const existing = await prisma.wallet.findMany();
@@ -29,7 +30,7 @@ export async function getWalletBalances(userId: string) {
   const wallets = await ensureWallets();
   const [transactionSums, exchangeSums, exchangeFeeDkk, exchangeFeeVnd] = await Promise.all([
     prisma.transaction.groupBy({
-      by: ["currency", "type"],
+      by: ["currency", "type", "paymentMethod"],
       where: {
         userId,
         type: { in: ["INCOME", "EXPENSE"] }
@@ -61,7 +62,9 @@ export async function getWalletBalances(userId: string) {
   for (const row of transactionSums) {
     const amount = row._sum.amount ?? 0;
     if (row.type === "INCOME") balances[row.currency] += amount;
-    if (row.type === "EXPENSE") balances[row.currency] -= amount;
+    if (row.type === "EXPENSE" && expenseAffectsWallet(row.paymentMethod)) {
+      balances[row.currency] -= amount;
+    }
   }
 
   balances.DKK -= (exchangeSums._sum.fromAmountDkk ?? 0) + (exchangeFeeDkk._sum.feeAmount ?? 0);

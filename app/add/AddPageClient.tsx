@@ -287,6 +287,9 @@ export default function AddPage() {
             <option value="CASH">Tiền mặt</option>
             <option value="CREDIT_CARD">Thẻ tín dụng</option>
           </select>
+          <p className="text-xs text-slate-400">
+            Mua bằng thẻ: chọn <strong>Thẻ tín dụng</strong>. Khi trả thẻ cuối kỳ, log giao dịch danh mục <strong>Tín dụng</strong> với phương thức <strong>Tiền mặt</strong>.
+          </p>
           <input className="input" name="note" type="text" placeholder="Ghi chú (tuỳ chọn)" />
           {renderLogTimeControl()}
           <button className="button" type="submit">Lưu chi tiêu</button>

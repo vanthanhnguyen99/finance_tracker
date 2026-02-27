@@ -4,6 +4,7 @@ import { hashPassword } from "@/lib/auth";
 import { checkRateLimit, getClientIp } from "@/lib/rate-limit";
 
 export const dynamic = "force-dynamic";
+const MIN_PASSWORD_LENGTH = 6;
 
 const GENERIC_OK_MESSAGE =
   "Nếu tài khoản hợp lệ, yêu cầu đặt lại mật khẩu đã được gửi và đang chờ admin duyệt.";
@@ -17,8 +18,11 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: "Thiếu email hoặc mật khẩu mới" }, { status: 400 });
   }
 
-  if (newPassword.length < 6) {
-    return NextResponse.json({ error: "Mật khẩu mới phải từ 6 ký tự" }, { status: 400 });
+  if (newPassword.length < MIN_PASSWORD_LENGTH) {
+    return NextResponse.json(
+      { error: `Mật khẩu mới phải từ ${MIN_PASSWORD_LENGTH} ký tự` },
+      { status: 400 }
+    );
   }
 
   const ip = getClientIp(req.headers.get("x-forwarded-for"), "unknown");
