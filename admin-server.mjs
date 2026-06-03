@@ -380,7 +380,7 @@ function appHtml() {
       <div class="header">
         <div>
           <h1 class="title">Finance Tracker Admin</h1>
-          <div class="muted">Quản lý tài khoản đăng ký, duyệt quyền sử dụng, backup/restore toàn hệ thống, duyệt quên mật khẩu và thu hồi session.</div>
+          <div class="muted">Quản lý tài khoản đăng ký, duyệt quyền sử dụng, backup/restore toàn hệ thống, clear user data, duyệt quên mật khẩu và thu hồi session.</div>
         </div>
         <span class="chip">Local Admin (6070)</span>
       </div>
@@ -400,6 +400,7 @@ function appHtml() {
       <div class="actions">
         <button class="btn btn-ghost" onclick="downloadSystemBackup()">Backup toàn hệ thống (JSON)</button>
         <button class="btn btn-danger" onclick="openSystemRestorePicker()">Restore toàn hệ thống từ file</button>
+        <button class="btn btn-warn" onclick="clearSystemUserData()">Clear user data (giữ session)</button>
         <input id="systemRestoreFile" type="file" accept="application/json" style="display:none" />
       </div>
       <div id="msg" class="msg"></div>
@@ -537,6 +538,7 @@ function appHtml() {
             '<button class="btn btn-warn js-disable">Disable</button>' +
             '<button class="btn btn-danger js-reject">Reject</button>' +
             '<button class="btn btn-ghost js-revoke">Thu hồi session</button>' +
+            '<button class="btn btn-danger js-clear-data">Xóa data user</button>' +
             (pendingReset
               ? '<button class="btn btn-ok js-approve-reset">Duyệt mật khẩu mới</button>' +
                 '<button class="btn btn-danger js-reject-reset">Từ chối mật khẩu mới</button>'
@@ -560,6 +562,7 @@ function appHtml() {
         wrap.querySelector('.js-disable')?.addEventListener('click', () => updateUserStatus(u.id, 'DISABLED'));
         wrap.querySelector('.js-reject')?.addEventListener('click', () => updateUserStatus(u.id, 'REJECTED'));
         wrap.querySelector('.js-revoke')?.addEventListener('click', () => revokeSessions(u.id));
+        wrap.querySelector('.js-clear-data')?.addEventListener('click', () => clearUserData(u));
         if (pendingReset) {
           wrap.querySelector('.js-approve-reset')?.addEventListener('click', () => approvePasswordReset(pendingReset.id));
           wrap.querySelector('.js-reject-reset')?.addEventListener('click', () => rejectPasswordReset(pendingReset.id));
@@ -651,6 +654,51 @@ function appHtml() {
       } catch (e) {
         setMsg(e.message || 'Restore thất bại');
         if (input) input.value = '';
+      }
+    }
+
+    function formatClearCounts(result) {
+      return (
+        result.transactionCount + ' giao dịch, ' +
+        result.exchangeCount + ' exchange, ' +
+        result.passwordResetRequestCount + ' yêu cầu quên mật khẩu'
+      );
+    }
+
+    async function clearUserData(user) {
+      const label = user.email || user.displayName || user.id;
+      const shouldClear = window.confirm(
+        'Xóa toàn bộ data nghiệp vụ của user "' + label + '"? Transactions, exchanges và yêu cầu quên mật khẩu sẽ bị xóa. Tài khoản và session vẫn được giữ.'
+      );
+      if (!shouldClear) return;
+
+      try {
+        const result = await api('/api/users/' + user.id + '/clear-data', 'POST');
+        setMsg('Đã xóa data user: ' + formatClearCounts(result) + '. Session vẫn được giữ.');
+        await loadUsers();
+      } catch (e) {
+        setMsg(e.message);
+      }
+    }
+
+    async function clearSystemUserData() {
+      const shouldClear = window.confirm(
+        'Xóa toàn bộ user data trên hệ thống? Transactions, exchanges và yêu cầu quên mật khẩu của tất cả user sẽ bị xóa. Tài khoản và session vẫn được giữ.'
+      );
+      if (!shouldClear) return;
+
+      const phrase = window.prompt('Nhập CLEAR USER DATA để xác nhận.');
+      if (phrase !== 'CLEAR USER DATA') {
+        setMsg('Đã hủy clear user data.');
+        return;
+      }
+
+      try {
+        const result = await api('/api/system/clear-user-data', 'POST');
+        setMsg('Đã clear user data toàn hệ thống: ' + formatClearCounts(result) + '. Session vẫn được giữ.');
+        await loadUsers();
+      } catch (e) {
+        setMsg(e.message);
       }
     }
 
@@ -747,6 +795,8 @@ function appHtml() {
     window.approveAllPending = approveAllPending;
     window.approvePasswordReset = approvePasswordReset;
     window.rejectPasswordReset = rejectPasswordReset;
+    window.clearUserData = clearUserData;
+    window.clearSystemUserData = clearSystemUserData;
     window.downloadSystemBackup = downloadSystemBackup;
     window.openSystemRestorePicker = openSystemRestorePicker;
 
@@ -779,6 +829,8 @@ const server = http.createServer(async (req, res) => {
     if (
       (req.method === "PATCH" && url.pathname.startsWith("/api/users/")) ||
       (req.method === "POST" && url.pathname.endsWith("/restore")) ||
+      (req.method === "POST" && url.pathname === "/api/system/clear-user-data") ||
+      (req.method === "POST" && url.pathname.endsWith("/clear-data")) ||
       (req.method === "POST" && url.pathname.endsWith("/revoke-sessions")) ||
       (req.method === "POST" && url.pathname.startsWith("/api/password-reset-requests/"))
     ) {
@@ -1056,6 +1108,28 @@ const server = http.createServer(async (req, res) => {
       return;
     }
 
+    if (req.method === "POST" && url.pathname === "/api/system/clear-user-data") {
+      const result = await prisma.$transaction(async (tx) => {
+        const passwordResetRequests = await tx.passwordResetRequest.deleteMany({});
+        const exchanges = await tx.exchange.deleteMany({});
+        const transactions = await tx.transaction.deleteMany({});
+
+        return {
+          passwordResetRequestCount: passwordResetRequests.count,
+          exchangeCount: exchanges.count,
+          transactionCount: transactions.count
+        };
+      });
+
+      sendJson(res, 200, {
+        ok: true,
+        scope: "system",
+        preserved: ["users", "sessions", "wallets"],
+        ...result
+      });
+      return;
+    }
+
     if (req.method === "PATCH" && url.pathname.startsWith("/api/users/")) {
       const id = url.pathname.split("/").pop();
       const body = await parseBody(req);
@@ -1119,6 +1193,45 @@ const server = http.createServer(async (req, res) => {
 
       const result = await prisma.session.deleteMany({ where: { userId: id } });
       sendJson(res, 200, { revoked: result.count });
+      return;
+    }
+
+    if (req.method === "POST" && url.pathname.endsWith("/clear-data")) {
+      const parts = url.pathname.split("/").filter(Boolean);
+      const id = parts[2];
+      if (!id || parts[0] !== "api" || parts[1] !== "users" || parts[3] !== "clear-data") {
+        sendJson(res, 400, { error: "Invalid payload" });
+        return;
+      }
+
+      const user = await prisma.userAllowlist.findUnique({
+        where: { id },
+        select: { id: true }
+      });
+      if (!user) {
+        sendJson(res, 404, { error: "User không tồn tại" });
+        return;
+      }
+
+      const result = await prisma.$transaction(async (tx) => {
+        const passwordResetRequests = await tx.passwordResetRequest.deleteMany({ where: { userId: id } });
+        const exchanges = await tx.exchange.deleteMany({ where: { userId: id } });
+        const transactions = await tx.transaction.deleteMany({ where: { userId: id } });
+
+        return {
+          passwordResetRequestCount: passwordResetRequests.count,
+          exchangeCount: exchanges.count,
+          transactionCount: transactions.count
+        };
+      });
+
+      sendJson(res, 200, {
+        ok: true,
+        scope: "user",
+        userId: id,
+        preserved: ["user", "sessions"],
+        ...result
+      });
       return;
     }
 

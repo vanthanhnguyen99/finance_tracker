@@ -33,6 +33,9 @@
 - **Admin backup/restore dữ liệu toàn hệ thống**:
   - Backup JSON toàn hệ thống (wallets, users, sessions, password reset requests, transactions, exchanges)
   - Restore từ file JSON với mode mặc định ghi đè toàn bộ dữ liệu hiện tại
+- **Admin clear user data (giữ session)**:
+  - Clear data nghiệp vụ của từng user hoặc toàn hệ thống từ admin app
+  - Xóa transactions, exchanges, password reset requests; giữ nguyên tài khoản, sessions và wallets
 
 ---
 
@@ -415,9 +418,12 @@ cat backup.sql | docker compose exec -T db psql -U "$POSTGRES_USER" "$POSTGRES_D
 - Admin app bổ sung thao tác cấp hệ thống:
   - `Backup toàn hệ thống (JSON)`: tải file backup đầy đủ.
   - `Restore toàn hệ thống từ file`: import lại toàn bộ dữ liệu từ file JSON backup.
+  - `Clear user data (giữ session)`: xóa dữ liệu nghiệp vụ của toàn hệ thống nhưng không đăng xuất user hiện tại.
 - API admin mới:
   - `GET /api/system/backup`
   - `POST /api/system/restore`
+  - `POST /api/system/clear-user-data`
+  - `POST /api/users/:id/clear-data`
 - Phạm vi dữ liệu trong backup hệ thống:
   - `wallets`
   - `users` (gồm `displayName`, `email`, `status`, `note`, `passwordHash`, timestamps)
@@ -431,3 +437,17 @@ cat backup.sql | docker compose exec -T db psql -U "$POSTGRES_USER" "$POSTGRES_D
 - Restore đang chạy theo mode mặc định `replace`:
   - Xóa dữ liệu hiện có ở các bảng nghiệp vụ chính.
   - Nạp lại dữ liệu từ file backup.
+
+### 13.10 Admin Clear User Data
+- Admin app hỗ trợ clear data theo 2 phạm vi:
+  - Từng user: nút `Xóa data user` trên card user.
+  - Toàn hệ thống: nút `Clear user data (giữ session)` ở cụm thao tác hệ thống.
+- Phạm vi bị xóa:
+  - `transactions`
+  - `exchanges`
+  - `passwordResetRequests`
+- Phạm vi được giữ lại:
+  - `users` / tài khoản đăng nhập
+  - `sessions`
+  - `wallets`
+- API trả về số bản ghi đã xóa theo từng bảng để admin kiểm tra sau thao tác.
