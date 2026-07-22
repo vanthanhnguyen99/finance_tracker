@@ -1,15 +1,24 @@
 import { prisma } from "@/lib/db";
+import Link from "next/link";
 import { getPreviousRangeFromBounds, getRange, type TimeFilter } from "@/lib/date";
 import { getWalletBalances } from "@/lib/wallet";
 import { formatMoney } from "@/lib/money";
-import { StatCard } from "./components/StatCard";
 import { ExpenseCurrencyToggle } from "./components/ExpenseCurrencyToggle";
 import { TimeFilterTabs } from "./components/TimeFilterTabs";
 import { unstable_noStore as noStore } from "next/cache";
 import { requireActivePageSession } from "@/lib/server-auth";
-import { LogoutButton } from "./components/LogoutButton";
 import { cookies } from "next/headers";
 import { isCreditCardRepayment } from "@/lib/credit";
+import {
+  ChartIcon,
+  ChevronRightIcon,
+  ExchangeIcon,
+  ExpenseIcon,
+  IncomeIcon,
+  PlusIcon,
+  WalletIcon
+} from "./components/AppIcons";
+import { ProfileMenu } from "./components/ProfileMenu";
 import {
   getDateInTimeZone,
   parseDateInputInTimeZone,
@@ -150,7 +159,7 @@ export default async function Dashboard({
     return `${formatDateDash(rangeStart)}->${formatDateDash(rangeEnd)}`;
   };
 
-  const [trendTransactionsDkk, exchangeDkkEntries, balances] = await Promise.all([
+  const [trendTransactionsDkk, exchangeDkkEntries, balances, recentTransactions, recentExchanges] = await Promise.all([
     prisma.transaction.findMany({
       where: {
         userId: user.id,
@@ -178,7 +187,32 @@ export default async function Dashboard({
         feeCurrency: true
       }
     }),
-    getWalletBalances(user.id)
+    getWalletBalances(user.id),
+    prisma.transaction.findMany({
+      where: { userId: user.id },
+      orderBy: { createdAt: "desc" },
+      take: 5,
+      select: {
+        id: true,
+        type: true,
+        amount: true,
+        currency: true,
+        category: true,
+        createdAt: true
+      }
+    }),
+    prisma.exchange.findMany({
+      where: { userId: user.id },
+      orderBy: { createdAt: "desc" },
+      take: 5,
+      select: {
+        id: true,
+        fromAmountDkk: true,
+        toAmountVnd: true,
+        provider: true,
+        createdAt: true
+      }
+    })
   ]);
 
   const exchangeToDkkExpense = (entry: {
@@ -230,21 +264,27 @@ export default async function Dashboard({
   function formatDelta(currentValue: number, previousValue: number) {
     if (previousValue === 0) {
       if (currentValue === 0) return "0%";
-      return "+100.0%";
+      return "+100,0%";
     }
     const percent = ((currentValue - previousValue) / Math.abs(previousValue)) * 100;
     const sign = percent > 0 ? "+" : "";
-    return `${sign}${percent.toFixed(1)}%`;
+    return `${sign}${percent.toFixed(1).replace(".", ",")}%`;
   }
 
   const incomeDelta = formatDelta(totalIncome, previousIncome);
   const expenseDelta = formatDelta(totalExpenseDkk, previousExpense);
   const netDelta = formatDelta(netDkk, previousNet);
 
-  function deltaClass(delta: string, positiveTone: string) {
-    if (delta.startsWith("+")) return `font-semibold ${positiveTone}`;
-    if (delta.startsWith("-")) return "font-semibold text-emerald-600";
-    return "font-semibold text-slate-600";
+  function deltaLabel(delta: string) {
+    if (delta === "0%") return "Không thay đổi so với kỳ trước";
+    const direction = delta.startsWith("+") ? "Tăng" : "Giảm";
+    return `${direction} ${delta.replace(/^[+-]/, "")} so với kỳ trước`;
+  }
+
+  function deltaTone(delta: string, increaseIsGood: boolean) {
+    if (delta === "0%") return "text-slate-500";
+    const isIncrease = delta.startsWith("+");
+    return isIncrease === increaseIsGood ? "text-success-dark" : "text-danger-dark";
   }
 
   const dayStart = new Date(start);
@@ -355,73 +395,6 @@ export default async function Dashboard({
     })
     .join(" ");
 
-  const cycleTargetPoints =
-    totalDays <= 7
-      ? totalDays
-      : totalDays <= 20
-        ? 6
-        : 8;
-  const cycleChunkSize = Math.max(1, Math.ceil(totalDays / Math.max(1, cycleTargetPoints)));
-  const cycleChunkCount = Math.ceil(totalDays / cycleChunkSize);
-  const cycleBuckets = Array.from({ length: cycleChunkCount }).map((_, index) => {
-    const chunkStart = new Date(dayStart);
-    chunkStart.setDate(dayStart.getDate() + index * cycleChunkSize);
-    const chunkEnd = new Date(chunkStart);
-    chunkEnd.setDate(chunkStart.getDate() + cycleChunkSize - 1);
-    chunkEnd.setHours(23, 59, 59, 999);
-    if (chunkEnd > dayEnd) chunkEnd.setTime(dayEnd.getTime());
-    return {
-      start: chunkStart,
-      end: chunkEnd,
-      income: 0,
-      expense: 0
-    };
-  });
-
-  for (const txn of currentRangeTransactionsDkk) {
-    const bucket = cycleBuckets.find(
-      (item) => txn.createdAt >= item.start && txn.createdAt <= item.end
-    );
-    if (!bucket) continue;
-    if (txn.type === "EXPENSE" && !isCreditCardRepayment(txn.category, txn.paymentMethod)) {
-      bucket.expense += txn.amount;
-    }
-  }
-
-  const inCycleData = cycleBuckets.map((bucket) => ({
-    ...bucket,
-    label: formatDateSlash(bucket.end)
-  }));
-  const maxInCycleValue = Math.max(
-    ...inCycleData.map((item) => item.expense),
-    1
-  );
-  const inCycleStepX =
-    inCycleData.length > 1
-      ? (trendChartWidth - trendChartPaddingX * 2) / (inCycleData.length - 1)
-      : 0;
-  const inCycleExpensePoints = inCycleData
-    .map((item, index) => {
-      const x = trendChartPaddingX + inCycleStepX * index;
-      const y = trendChartHeight - trendChartPaddingY - (item.expense / maxInCycleValue) * (trendChartHeight - trendChartPaddingY * 2);
-      return `${x},${y}`;
-    })
-    .join(" ");
-
-  const compareCurrent = [
-    { key: "income", label: "Thu nhập", value: totalIncome },
-    { key: "expense", label: "Chi tiêu", value: totalExpenseDkk }
-  ];
-  const comparePrevious = [
-    { key: "income", label: "Thu nhập", value: previousIncome },
-    { key: "expense", label: "Chi tiêu", value: previousExpense }
-  ];
-  const maxCompareValue = Math.max(
-    ...compareCurrent.map((item) => Math.abs(item.value)),
-    ...comparePrevious.map((item) => Math.abs(item.value)),
-    1
-  );
-
   const creditRepaymentFilter = {
     AND: [
       {
@@ -504,95 +477,47 @@ export default async function Dashboard({
     })
     .join(", ");
 
-  const now = new Date();
-  const monthStarts = Array.from({ length: 4 }).map((_, index) => {
-    const date = new Date(now.getFullYear(), now.getMonth() - (3 - index), 1);
-    return date;
+  const hasTrendData = trendData.some((item) => item.income > 0 || item.expense > 0);
+  const recentDateFormatter = new Intl.DateTimeFormat("vi-VN", {
+    timeZone: userTimeZone,
+    day: "2-digit",
+    month: "2-digit",
+    hour: "2-digit",
+    minute: "2-digit"
   });
-  const monthLabelFormatter = new Intl.DateTimeFormat("en-GB", { month: "short" });
-  const monthLabels = monthStarts.map((date) => monthLabelFormatter.format(date));
-  const monthEnd = new Date(now.getFullYear(), now.getMonth() + 1, 1);
-
-  const [monthlyTransactions, monthlyExchanges] = await Promise.all([
-    prisma.transaction.findMany({
-      where: {
-        userId: user.id,
-        type: { in: ["INCOME", "EXPENSE"] },
-        currency: "DKK",
-        createdAt: { gte: monthStarts[0], lt: monthEnd }
-      },
-      select: {
-        type: true,
-        amount: true,
-        createdAt: true,
-        category: true,
-        paymentMethod: true
-      }
+  const recentItems = [
+    ...recentTransactions.map((transaction) => {
+      const isIncome = transaction.type === "INCOME";
+      const typeLabel = isIncome ? "Thu nhập" : transaction.type === "EXPENSE" ? "Chi tiêu" : "Giao dịch";
+      return {
+        id: `transaction-${transaction.id}`,
+        type: transaction.type,
+        title: transaction.category || typeLabel,
+        subtitle: `${typeLabel} · ${recentDateFormatter.format(transaction.createdAt)}`,
+        amount: `${isIncome ? "+" : transaction.type === "EXPENSE" ? "-" : ""}${formatMoney(transaction.amount, transaction.currency)}`,
+        createdAt: transaction.createdAt
+      };
     }),
-    prisma.exchange.findMany({
-      where: {
-        userId: user.id,
-        createdAt: { gte: monthStarts[0], lt: monthEnd }
-      },
-      select: {
-        createdAt: true,
-        fromAmountDkk: true,
-        feeAmount: true,
-        feeCurrency: true
-      }
-    })
-  ]);
-
-  const monthlyIncome = new Array(4).fill(0);
-  const monthlyExpense = new Array(4).fill(0);
-
-  for (const txn of monthlyTransactions) {
-    const monthIndex = monthStarts.findIndex(
-      (start) =>
-        txn.createdAt >= start &&
-        txn.createdAt < new Date(start.getFullYear(), start.getMonth() + 1, 1)
-    );
-    if (monthIndex === -1) continue;
-    if (txn.type === "INCOME") monthlyIncome[monthIndex] += txn.amount;
-    if (txn.type === "EXPENSE" && !isCreditCardRepayment(txn.category, txn.paymentMethod)) {
-      monthlyExpense[monthIndex] += txn.amount;
-    }
-  }
-
-  for (const exchange of monthlyExchanges) {
-    const monthIndex = monthStarts.findIndex(
-      (startOfMonth) =>
-        exchange.createdAt >= startOfMonth &&
-        exchange.createdAt < new Date(startOfMonth.getFullYear(), startOfMonth.getMonth() + 1, 1)
-    );
-    if (monthIndex === -1) continue;
-    monthlyExpense[monthIndex] += exchangeToDkkExpense(exchange);
-  }
-
-  const maxMonthly = Math.max(
-    ...monthlyIncome,
-    ...monthlyExpense,
-    1
-  );
+    ...recentExchanges.map((exchange) => ({
+      id: `exchange-${exchange.id}`,
+      type: "EXCHANGE" as const,
+      title: exchange.provider || "Đổi DKK sang VND",
+      subtitle: `Nhận ${formatMoney(exchange.toAmountVnd, "VND")} · ${recentDateFormatter.format(exchange.createdAt)}`,
+      amount: `-${formatMoney(exchange.fromAmountDkk, "DKK")}`,
+      createdAt: exchange.createdAt
+    }))
+  ]
+    .sort((a, b) => b.createdAt.getTime() - a.createdAt.getTime())
+    .slice(0, 5);
 
   return (
-    <main className="container-page">
+    <main className="container-page app-enter">
       <div className="hero-bar">
-        <div className="flex items-center gap-3">
-          <div className="flex h-10 w-10 items-center justify-center">
-            <img src="/logo.svg" alt="FinanceTracker" className="h-10 w-10" />
-          </div>
-          <div>
-            <p className="text-xs uppercase tracking-widest text-slate-400">FinanceTracker</p>
-            <h1 className="text-lg font-semibold text-ink">Quản lý chi tiêu dễ dàng</h1>
-          </div>
+        <div className="flex min-w-0 items-center gap-3">
+          <img src="/logo.svg" alt="" className="h-9 w-9 shrink-0" />
+          <h1 className="truncate text-xl font-semibold text-ink">Tổng quan</h1>
         </div>
-        <div className="flex items-center gap-2">
-          <a className="primary-pill" href="/add">
-            + Thêm giao dịch
-          </a>
-          <LogoutButton />
-        </div>
+        <ProfileMenu name={user.displayName} email={user.email} />
       </div>
 
       <TimeFilterTabs
@@ -602,308 +527,223 @@ export default async function Dashboard({
         fromDate={fromDateInput}
         toDate={toDateInput}
         customActive={hasCustomRange}
+        rangeLabel={periodLabel}
       />
-      <p className="mt-2 text-sm text-slate-500">Khoảng thời gian: {periodLabel}</p>
-      <p className="mt-1 text-xs text-slate-400">Áp dụng cho: Tổng thu chi và phân bổ chi tiêu</p>
-
-      <div className="mt-6 grid gap-4 md:grid-cols-2 xl:grid-cols-4">
-        <StatCard
-          title="Ví DKK"
-          value={formatMoney(balances.balances.DKK, "DKK")}
-          hint={
-            <span className="chip">
-              <span>Ví DKK</span>
-            </span>
-          }
-          tone="balance"
-        />
-        <StatCard
-          title="Ví VND"
-          value={formatMoney(balances.balances.VND, "VND")}
-          hint={
-            <span className="chip">
-              <span>Ví VND</span>
-            </span>
-          }
-        />
-        <StatCard title="Thu nhập" value={formatMoney(totalIncome, "DKK")} tone="income" />
-        <StatCard title="Chi tiêu" value={formatMoney(totalExpenseDkk, "DKK")} tone="expense" />
-      </div>
-      <div className="mt-3 grid gap-2 rounded-2xl border border-slate-200 bg-white px-3 py-3 text-xs text-slate-500 md:grid-cols-3">
-        <p>
-          Thu nhập vs kỳ trước:{" "}
-          <span className={deltaClass(incomeDelta, "text-emerald-600")}>
-            {incomeDelta}
-          </span>
-        </p>
-        <p>
-          Chi tiêu vs kỳ trước:{" "}
-          <span className={deltaClass(expenseDelta, "text-rose-500")}>
-            {expenseDelta}
-          </span>
-        </p>
-        <p>
-          Chênh lệch ròng vs kỳ trước: <span className="font-semibold text-slate-700">{netDelta}</span>
-        </p>
-      </div>
-
-      <div className="mt-8 grid gap-4 lg:grid-cols-2">
-        <div className="card">
-          <div className="flex items-center justify-between">
-            <h2 className="text-base font-semibold text-ink">Xu hướng theo kỳ lọc (DKK)</h2>
-            <span className="chip">
-              {hasCustomRange ? `${trendData.length} mốc` : "3 kỳ gần nhất"}
-            </span>
+      <section className="card mt-4 overflow-hidden p-0 md:p-0" aria-labelledby="wallets-title">
+        <div className="flex items-center justify-between px-4 pt-4">
+          <div>
+            <p className="text-xs font-medium text-slate-500">Tài sản của tôi</p>
+            <h2 id="wallets-title" className="mt-0.5 text-lg font-semibold text-ink">Số dư theo ví</h2>
           </div>
-          <div className="mt-5 rounded-2xl border border-slate-200 bg-slate-50 p-3">
-            <svg
-              viewBox={`0 0 ${trendChartWidth} ${trendChartHeight}`}
-              className="h-36 w-full"
-              role="img"
-              aria-label="Biểu đồ đường thu nhập và chi tiêu theo kỳ lọc"
-            >
-              <line
-                x1={trendChartPaddingX}
-                y1={trendChartHeight - trendChartPaddingY}
-                x2={trendChartWidth - trendChartPaddingX}
-                y2={trendChartHeight - trendChartPaddingY}
-                stroke="#cbd5e1"
-                strokeWidth="1"
-              />
-              <polyline
-                fill="none"
-                stroke="#34d399"
-                strokeWidth="3"
-                strokeLinecap="round"
-                strokeLinejoin="round"
-                points={incomeLinePoints}
-              />
-              <polyline
-                fill="none"
-                stroke="#f87171"
-                strokeWidth="3"
-                strokeLinecap="round"
-                strokeLinejoin="round"
-                points={expenseLinePoints}
-              />
-              {trendData.map((item, index) => {
-                const x = trendChartPaddingX + trendStepX * index;
-                const incomeY = getTrendY(item.income);
-                const expenseY = getTrendY(item.expense);
-                return (
-                  <g key={item.label}>
-                    <circle cx={x} cy={incomeY} r="3" fill="#34d399" />
-                    <circle cx={x} cy={expenseY} r="3" fill="#f87171" />
-                  </g>
-                );
-              })}
-            </svg>
-            <div
-              className="mt-2 grid gap-2 text-[10px] text-slate-400"
-              style={{ gridTemplateColumns: `repeat(${trendData.length}, minmax(0, 1fr))` }}
-            >
-              {trendData.map((item) => (
-                <span key={item.label} className="truncate text-center">
-                  <span className="whitespace-nowrap">{item.label}</span>
-                </span>
-              ))}
+          <span className="chip">2 ví</span>
+        </div>
+        <div className="mt-3 grid grid-cols-2 divide-x divide-slate-100 border-t border-slate-100">
+          <div className="min-w-0 p-4">
+            <div className="flex items-center gap-2 text-sm font-medium text-slate-500">
+              <span className="inline-flex h-8 w-8 items-center justify-center rounded-lg bg-primary-50 text-primary-700">
+                <WalletIcon className="h-4 w-4" />
+              </span>
+              DKK
             </div>
+            <p className="money-value mt-3 break-words text-lg font-bold leading-6 text-ink sm:text-xl">
+              {formatMoney(balances.balances.DKK, "DKK")}
+            </p>
           </div>
-          <div className="mt-4 flex items-center gap-4 text-xs text-slate-500">
-            <span className="flex items-center gap-2">
-              <span className="h-2 w-2 rounded-full bg-emerald-400" />
-              Thu nhập
-            </span>
-            <span className="flex items-center gap-2">
-              <span className="h-2 w-2 rounded-full bg-rose-400" />
-              Chi tiêu
-            </span>
+          <div className="min-w-0 p-4">
+            <div className="flex items-center gap-2 text-sm font-medium text-slate-500">
+              <span className="inline-flex h-8 w-8 items-center justify-center rounded-lg bg-slate-100 text-slate-600">
+                <WalletIcon className="h-4 w-4" />
+              </span>
+              VND
+            </div>
+            <p className="money-value mt-3 break-words text-lg font-bold leading-6 text-ink sm:text-xl">
+              {formatMoney(balances.balances.VND, "VND")}
+            </p>
           </div>
         </div>
+      </section>
 
-        <div className="card">
-          <div className="flex items-center justify-between">
-            <h2 className="text-base font-semibold text-ink">Chi tiêu trong kỳ (DKK)</h2>
-            <span className="chip">{inCycleData.length} mốc</span>
-          </div>
-          <div className="mt-5 rounded-2xl border border-slate-200 bg-slate-50 p-3">
-            <svg
-              viewBox={`0 0 ${trendChartWidth} ${trendChartHeight}`}
-              className="h-36 w-full"
-              role="img"
-              aria-label="Biểu đồ đường chi tiêu DKK trong kỳ hiện tại"
-            >
-              <line
-                x1={trendChartPaddingX}
-                y1={trendChartHeight - trendChartPaddingY}
-                x2={trendChartWidth - trendChartPaddingX}
-                y2={trendChartHeight - trendChartPaddingY}
-                stroke="#cbd5e1"
-                strokeWidth="1"
-              />
-              <polyline
-                fill="none"
-                stroke="#f87171"
-                strokeWidth="3"
-                strokeLinecap="round"
-                strokeLinejoin="round"
-                points={inCycleExpensePoints}
-              />
-              {inCycleData.map((item, index) => {
-                const x = trendChartPaddingX + inCycleStepX * index;
-                const expenseY =
-                  trendChartHeight -
-                  trendChartPaddingY -
-                  (item.expense / maxInCycleValue) * (trendChartHeight - trendChartPaddingY * 2);
-                return (
-                  <g key={item.label}>
-                    <circle cx={x} cy={expenseY} r="3" fill="#f87171" />
-                  </g>
-                );
-              })}
-            </svg>
-            <div
-              className="mt-2 grid gap-2 text-[10px] text-slate-400"
-              style={{ gridTemplateColumns: `repeat(${inCycleData.length}, minmax(0, 1fr))` }}
-            >
-              {inCycleData.map((item, index) => {
-                const showLabel = inCycleData.length <= 7 || index % 2 === 0;
-                return (
-                  <span key={item.label} className="truncate text-center">
-                    <span className="whitespace-nowrap">{showLabel ? item.label : ""}</span>
-                  </span>
-                );
-              })}
+      <section className="card mt-4 overflow-hidden p-0 md:p-0" aria-label="Thu nhập và chi tiêu trong kỳ">
+        <div className="grid grid-cols-2 divide-x divide-slate-100">
+          <div className="min-w-0 p-4">
+            <div className="flex items-center gap-2 text-sm font-medium text-slate-500">
+              <IncomeIcon className="h-5 w-5 text-success-dark" />
+              Thu nhập (DKK)
             </div>
+            <p className="money-value mt-2 break-words text-xl font-bold leading-7 text-success-dark">
+              {formatMoney(totalIncome, "DKK")}
+            </p>
+            <p className={`mt-2 text-xs leading-4 ${deltaTone(incomeDelta, true)}`}>
+              {deltaLabel(incomeDelta)}
+            </p>
           </div>
-          <div className="mt-4 flex items-center gap-4 text-xs text-slate-500">
-            <span className="flex items-center gap-2">
-              <span className="h-2 w-2 rounded-full bg-rose-400" />
-              Chi tiêu
-            </span>
+          <div className="min-w-0 p-4">
+            <div className="flex items-center gap-2 text-sm font-medium text-slate-500">
+              <ExpenseIcon className="h-5 w-5 text-danger-dark" />
+              Chi tiêu (DKK)
+            </div>
+            <p className="money-value mt-2 break-words text-xl font-bold leading-7 text-danger-dark">
+              {formatMoney(totalExpenseDkk, "DKK")}
+            </p>
+            <p className={`mt-2 text-xs leading-4 ${deltaTone(expenseDelta, false)}`}>
+              {deltaLabel(expenseDelta)}
+            </p>
           </div>
         </div>
-
-        <div className="card">
-          <div className="flex items-center justify-between">
-            <h2 className="text-base font-semibold text-ink">So sánh với kỳ trước</h2>
-            <span className="chip">DKK</span>
+        <div className="flex flex-wrap items-center justify-between gap-2 border-t border-slate-100 bg-slate-50 px-4 py-3">
+          <div>
+            <p className="text-xs text-slate-500">Còn lại trong kỳ</p>
+            <p className="money-value mt-0.5 text-base font-semibold text-ink">{formatMoney(netDkk, "DKK")}</p>
           </div>
-          <div className="mt-5 grid grid-cols-2 gap-3">
-            {compareCurrent.map((item, index) => {
-              const currentHeight = Math.max(
-                4,
-                Math.round((Math.abs(item.value) / maxCompareValue) * 120)
-              );
-              const previousHeight = Math.max(
-                4,
-                Math.round((Math.abs(comparePrevious[index].value) / maxCompareValue) * 120)
-              );
-              return (
-                <div key={item.key} className="flex flex-col items-center gap-2">
-                  <div className="flex h-32 items-end gap-2">
-                    <div
-                      className="w-3.5 rounded-full bg-indigo-300"
-                      style={{ height: `${previousHeight}px` }}
-                      title={`Kỳ trước: ${formatMoney(comparePrevious[index].value, "DKK")}`}
+          <p className={`text-xs ${deltaTone(netDelta, true)}`}>{deltaLabel(netDelta)}</p>
+        </div>
+      </section>
+
+      <div className="mt-7 grid gap-7 lg:grid-cols-2">
+        <section aria-labelledby="trend-title">
+          <div className="flex items-center justify-between gap-3">
+            <div>
+              <h2 id="trend-title" className="text-xl font-semibold text-ink">Xu hướng thu và chi</h2>
+              <p className="mt-0.5 text-sm text-slate-500">Đơn vị DKK · {periodLabel}</p>
+            </div>
+            {hasTrendData ? <span className="chip">{hasCustomRange ? `${trendData.length} mốc` : "3 kỳ"}</span> : null}
+          </div>
+          <div className="card mt-3">
+            {hasTrendData ? (
+              <>
+                <div className="rounded-control bg-slate-50 p-3">
+                  <svg
+                    viewBox={`0 0 ${trendChartWidth} ${trendChartHeight}`}
+                    className="h-40 w-full"
+                    role="img"
+                    aria-label="Biểu đồ đường thu nhập và chi tiêu theo kỳ lọc"
+                  >
+                    <line
+                      x1={trendChartPaddingX}
+                      y1={trendChartHeight - trendChartPaddingY}
+                      x2={trendChartWidth - trendChartPaddingX}
+                      y2={trendChartHeight - trendChartPaddingY}
+                      stroke="#E1E5EA"
+                      strokeWidth="1"
                     />
-                    <div
-                      className="w-3.5 rounded-full bg-indigo-600"
-                      style={{ height: `${currentHeight}px` }}
-                      title={`Kỳ này: ${formatMoney(item.value, "DKK")}`}
-                    />
+                    <polyline fill="none" stroke="#2E9D62" strokeWidth="3" strokeLinecap="round" strokeLinejoin="round" points={incomeLinePoints} />
+                    <polyline fill="none" stroke="#DC4C4C" strokeWidth="3" strokeLinecap="round" strokeLinejoin="round" points={expenseLinePoints} />
+                    {trendData.map((item, index) => {
+                      const x = trendChartPaddingX + trendStepX * index;
+                      return (
+                        <g key={item.label}>
+                          <circle cx={x} cy={getTrendY(item.income)} r="3" fill="#2E9D62" />
+                          <circle cx={x} cy={getTrendY(item.expense)} r="3" fill="#DC4C4C" />
+                        </g>
+                      );
+                    })}
+                  </svg>
+                  <div className="mt-2 grid gap-2 text-xs text-slate-500" style={{ gridTemplateColumns: `repeat(${trendData.length}, minmax(0, 1fr))` }}>
+                    {trendData.map((item) => <span key={item.label} className="truncate text-center">{item.label}</span>)}
                   </div>
-                  <span className="text-[10px] font-semibold text-slate-500">{item.label}</span>
+                </div>
+                <div className="mt-4 flex items-center gap-4 text-xs text-slate-500">
+                  <span className="flex items-center gap-2"><span className="h-2 w-2 rounded-full bg-success" />Thu nhập</span>
+                  <span className="flex items-center gap-2"><span className="h-2 w-2 rounded-full bg-danger" />Chi tiêu</span>
+                </div>
+              </>
+            ) : (
+              <div className="flex min-h-44 flex-col items-center justify-center px-4 text-center">
+                <span className="inline-flex h-11 w-11 items-center justify-center rounded-full bg-primary-50 text-primary-600">
+                  <ChartIcon className="h-5 w-5" />
+                </span>
+                <h3 className="mt-3 text-base font-semibold text-ink">Chưa có dữ liệu trong kỳ này</h3>
+                <p className="mt-1 text-sm text-slate-500">Thêm giao dịch để xem xu hướng thu và chi.</p>
+                <Link href="/add" className="mt-4 inline-flex min-h-10 items-center gap-2 rounded-control bg-primary-600 px-4 text-sm font-semibold text-white">
+                  <PlusIcon className="h-4 w-4" />Thêm giao dịch
+                </Link>
+              </div>
+            )}
+          </div>
+        </section>
+
+        <section aria-labelledby="breakdown-title">
+          <div className="flex items-center justify-between gap-3">
+            <div>
+              <h2 id="breakdown-title" className="text-xl font-semibold text-ink">Phân bổ chi tiêu</h2>
+              <p className="mt-0.5 text-sm text-slate-500">Tiền đang được chi vào đâu</p>
+            </div>
+            <ExpenseCurrencyToggle active={expenseCurrency} />
+          </div>
+          <div className="card mt-3">
+            {totalBreakdown > 0 ? (
+              <div className="grid items-center gap-5 sm:grid-cols-[168px_minmax(0,1fr)]">
+                <div className="flex justify-center">
+                  <div className="relative h-36 w-36 rounded-full" style={{ background: `conic-gradient(${gradient})` }}>
+                    <div className="absolute inset-5 flex flex-col items-center justify-center rounded-full bg-white text-center">
+                      <span className="text-xs text-slate-500">Tổng chi</span>
+                      <span className="money-value mt-1 max-w-[96px] break-words text-sm font-bold text-ink">{formatMoney(totalBreakdown, expenseCurrency)}</span>
+                    </div>
+                  </div>
+                </div>
+                <div className="grid gap-2.5 text-sm text-slate-600">
+                  {conicStops.map((item) => (
+                    <div key={item.label} className="flex items-center justify-between gap-3">
+                      <span className="flex min-w-0 items-center gap-2">
+                        <span className="h-2.5 w-2.5 shrink-0 rounded-full" style={{ backgroundColor: item.color }} />
+                        <span className="truncate">{item.label}</span>
+                      </span>
+                      <span className="money-value shrink-0 font-medium text-slate-700">{formatMoney(item.amount, expenseCurrency)}</span>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            ) : (
+              <div className="flex min-h-44 flex-col items-center justify-center px-4 text-center">
+                <span className="inline-flex h-11 w-11 items-center justify-center rounded-full bg-danger-light text-danger-dark">
+                  <ExpenseIcon className="h-5 w-5" />
+                </span>
+                <h3 className="mt-3 text-base font-semibold text-ink">Chưa có khoản chi trong kỳ</h3>
+                <p className="mt-1 text-sm text-slate-500">Các danh mục chi tiêu sẽ xuất hiện tại đây.</p>
+              </div>
+            )}
+          </div>
+        </section>
+      </div>
+
+      <section className="mt-7" aria-labelledby="recent-title">
+        <div className="flex items-center justify-between gap-3">
+          <div>
+            <h2 id="recent-title" className="text-xl font-semibold text-ink">Giao dịch gần đây</h2>
+            <p className="mt-0.5 text-sm text-slate-500">5 hoạt động mới nhất</p>
+          </div>
+          <Link href="/history" className="inline-flex min-h-11 items-center gap-1 text-sm font-semibold text-primary-600 focus-visible:rounded focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary-300">
+            Xem tất cả <ChevronRightIcon className="h-4 w-4" />
+          </Link>
+        </div>
+        {recentItems.length > 0 ? (
+          <div className="mt-3 overflow-hidden rounded-card border border-slate-200 bg-white shadow-soft">
+            {recentItems.map((item, index) => {
+              const ItemIcon = item.type === "INCOME" ? IncomeIcon : item.type === "EXPENSE" ? ExpenseIcon : ExchangeIcon;
+              const iconTone = item.type === "INCOME" ? "bg-success-light text-success-dark" : item.type === "EXPENSE" ? "bg-danger-light text-danger-dark" : "bg-primary-50 text-primary-700";
+              const amountTone = item.type === "INCOME" ? "text-success-dark" : item.type === "EXPENSE" ? "text-danger-dark" : "text-primary-700";
+              return (
+                <div key={item.id} className={`flex min-h-16 items-center gap-3 px-4 py-3 ${index > 0 ? "border-t border-slate-100" : ""}`}>
+                  <span className={`inline-flex h-10 w-10 shrink-0 items-center justify-center rounded-xl ${iconTone}`}><ItemIcon className="h-5 w-5" /></span>
+                  <div className="min-w-0 flex-1">
+                    <p className="truncate text-sm font-semibold text-ink">{item.title}</p>
+                    <p className="mt-0.5 truncate text-xs text-slate-500">{item.subtitle}</p>
+                  </div>
+                  <p className={`money-value max-w-[42%] break-words text-right text-sm font-semibold ${amountTone}`}>{item.amount}</p>
                 </div>
               );
             })}
           </div>
-          <div className="mt-4 flex items-center gap-4 text-xs text-slate-500">
-            <span className="flex items-center gap-2">
-              <span className="h-2 w-2 rounded-full bg-indigo-600" />
-              Kỳ này
-            </span>
-            <span className="flex items-center gap-2">
-              <span className="h-2 w-2 rounded-full bg-indigo-300" />
-              Kỳ trước
-            </span>
+        ) : (
+          <div className="card mt-3 flex min-h-36 flex-col items-center justify-center text-center">
+            <p className="text-base font-semibold text-ink">Chưa có giao dịch</p>
+            <p className="mt-1 text-sm text-slate-500">Thêm giao dịch đầu tiên để bắt đầu theo dõi.</p>
+            <Link href="/add" className="mt-4 inline-flex min-h-10 items-center gap-2 rounded-control bg-primary-600 px-4 text-sm font-semibold text-white">
+              <PlusIcon className="h-4 w-4" />Thêm giao dịch
+            </Link>
           </div>
-        </div>
-
-        <div className="card">
-          <div className="flex items-center justify-between">
-            <h2 className="text-base font-semibold text-ink">Phân bổ chi tiêu</h2>
-            <ExpenseCurrencyToggle active={expenseCurrency} />
-          </div>
-          <div className="mt-6 flex items-center justify-center">
-            <div
-              className="relative h-40 w-40 rounded-full sm:h-44 sm:w-44"
-              style={{
-                background: totalBreakdown ? `conic-gradient(${gradient})` : "#e2e8f0"
-              }}
-            >
-              <div className="absolute inset-5 rounded-full bg-white sm:inset-6" />
-            </div>
-          </div>
-          {breakdownItems.length === 0 ? (
-            <p className="mt-6 text-center text-xs text-slate-500">Chưa có dữ liệu chi tiêu.</p>
-          ) : (
-            <div className="mt-6 grid gap-2 text-xs text-slate-500">
-              {conicStops.map((item) => (
-                <div key={item.label} className="flex items-center justify-between">
-                  <span className="flex items-center gap-2">
-                    <span className="h-2 w-2 rounded-full" style={{ backgroundColor: item.color }} />
-                    {item.label}
-                  </span>
-                  <span>{formatMoney(item.amount, expenseCurrency)}</span>
-                </div>
-              ))}
-            </div>
-          )}
-        </div>
-        <div className="card">
-          <div className="flex items-center justify-between">
-            <h2 className="text-base font-semibold text-ink">Tổng quan theo tháng</h2>
-            <span className="chip">Luôn 4 tháng gần nhất (DKK)</span>
-          </div>
-          <div className="mt-6 rounded-2xl border border-dashed border-slate-200 bg-gradient-to-b from-white to-slate-50 p-4">
-            <div className="flex h-52 items-end gap-4">
-              {monthLabels.map((label, index) => {
-                const incomeHeight = Math.round((monthlyIncome[index] / maxMonthly) * 180);
-                const expenseHeight = Math.round((monthlyExpense[index] / maxMonthly) * 180);
-                return (
-                  <div key={label} className="flex flex-1 flex-col items-center gap-2">
-                    <div className="flex h-44 items-end gap-2">
-                      <div
-                        className="w-3 rounded-full bg-emerald-400"
-                        style={{ height: `${incomeHeight}px` }}
-                      />
-                      <div
-                        className="w-3 rounded-full bg-rose-400"
-                        style={{ height: `${expenseHeight}px` }}
-                      />
-                    </div>
-                    <span className="text-[10px] uppercase tracking-wide text-slate-400">
-                      {label}
-                    </span>
-                  </div>
-                );
-              })}
-            </div>
-          </div>
-          <div className="mt-4 flex items-center gap-4 text-xs text-slate-500">
-            <span className="flex items-center gap-2">
-              <span className="h-2 w-2 rounded-full bg-rose-400" />
-              Chi tiêu
-            </span>
-            <span className="flex items-center gap-2">
-              <span className="h-2 w-2 rounded-full bg-emerald-400" />
-              Thu nhập
-            </span>
-          </div>
-        </div>
-      </div>
-
+        )}
+      </section>
     </main>
   );
 }

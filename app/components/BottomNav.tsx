@@ -3,20 +3,28 @@
 import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
 import clsx from "clsx";
+import { HistoryIcon, HomeIcon, PlusIcon } from "./AppIcons";
 
 type NavHref = "/" | "/add" | "/history";
 
-const items: { href: NavHref; label: string }[] = [
-  { href: "/", label: "Tổng quan" },
-  { href: "/add", label: "Thêm" },
-  { href: "/history", label: "Lịch sử" }
+const items = [
+  { href: "/" as const, label: "Tổng quan", icon: HomeIcon },
+  { href: "/add" as const, label: "Thêm", icon: PlusIcon },
+  { href: "/history" as const, label: "Giao dịch", icon: HistoryIcon }
 ];
 
 export function BottomNav() {
   const pathname = usePathname();
   const router = useRouter();
 
-  if (pathname === "/login" || pathname === "/register" || pathname === "/forgot-password") return null;
+  if (
+    pathname.startsWith("/add") ||
+    pathname === "/login" ||
+    pathname === "/register" ||
+    pathname === "/forgot-password"
+  ) {
+    return null;
+  }
 
   function handleRefreshNavigation(
     event: React.MouseEvent<HTMLAnchorElement>,
@@ -34,11 +42,12 @@ export function BottomNav() {
 
   return (
     <nav className="navbar">
-      <div className="mx-auto max-w-md px-4 pt-2 text-sm font-semibold">
+      <div className="mx-auto max-w-md px-3 text-sm font-semibold">
         <div className="bottom-nav-grid">
           {items.map((item) => {
             const active = pathname === item.href;
             const isAdd = item.href === "/add";
+            const Icon = item.icon;
 
             if (isAdd) {
               return (
@@ -48,6 +57,7 @@ export function BottomNav() {
                   prefetch={false}
                   onClick={(event) => handleRefreshNavigation(event, item.href)}
                   className="bottom-nav-add"
+                  aria-label="Thêm giao dịch"
                 >
                   <span
                     className={clsx(
@@ -56,7 +66,7 @@ export function BottomNav() {
                     )}
                     aria-hidden="true"
                   >
-                    +
+                    <Icon className="h-6 w-6" />
                   </span>
                   <span
                     className={clsx(
@@ -80,8 +90,10 @@ export function BottomNav() {
                   "bottom-nav-item",
                   active ? "bottom-nav-item-active" : "bottom-nav-item-idle"
                 )}
+                aria-current={active ? "page" : undefined}
               >
-                {item.label}
+                <Icon className="h-6 w-6" />
+                <span>{item.label}</span>
               </Link>
             );
           })}

@@ -2,6 +2,7 @@
 
 import { useState } from "react";
 import { useRouter } from "next/navigation";
+import { LogoutIcon } from "./AppIcons";
 
 export function LogoutButton({ className = "" }: { className?: string }) {
   const router = useRouter();
@@ -24,9 +25,14 @@ export function LogoutButton({ className = "" }: { className?: string }) {
       type="button"
       onClick={handleLogout}
       disabled={pending}
-      className={`inline-flex min-h-11 items-center rounded-full border border-slate-200 bg-white px-4 text-sm font-semibold text-slate-600 ${pending ? "opacity-70" : ""} ${className}`}
+      className={`icon-button gap-2 px-2 sm:px-3 ${pending ? "opacity-70" : ""} ${className}`}
+      aria-label={pending ? "Đang đăng xuất" : "Đăng xuất"}
+      title={pending ? "Đang đăng xuất" : "Đăng xuất"}
     >
-      {pending ? "Đang đăng xuất..." : "Đăng xuất"}
+      <LogoutIcon className="h-5 w-5" />
+      <span className="hidden text-sm font-semibold sm:inline">
+        {pending ? "Đang đăng xuất..." : "Đăng xuất"}
+      </span>
     </button>
   );
 }

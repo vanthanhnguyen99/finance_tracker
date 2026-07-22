@@ -2,6 +2,7 @@ import "./globals.css";
 import type { Metadata, Viewport } from "next";
 import { BottomNav } from "./components/BottomNav";
 import { TimezoneCookieSync } from "./components/TimezoneCookieSync";
+import { DataRefreshSync } from "./components/DataRefreshSync";
 
 export const metadata: Metadata = {
   title: "Quản lý chi tiêu DKK/VND",
@@ -17,20 +18,24 @@ export const metadata: Metadata = {
 export const viewport: Viewport = {
   width: "device-width",
   initialScale: 1,
-  viewportFit: "cover"
+  viewportFit: "cover",
+  themeColor: "#F8F9FB"
 };
 
 export default function RootLayout({ children }: { children: React.ReactNode }) {
   return (
     <html lang="vi">
-      <body>
-        <TimezoneCookieSync />
+      <head>
         <link rel="preconnect" href="https://fonts.googleapis.com" />
         <link rel="preconnect" href="https://fonts.gstatic.com" crossOrigin="anonymous" />
         <link
-          href="https://fonts.googleapis.com/css2?family=Outfit:wght@300;400;500;600;700&display=swap"
+          href="https://fonts.googleapis.com/css2?family=Be+Vietnam+Pro:wght@400;500;600;700&display=swap"
           rel="stylesheet"
         />
+      </head>
+      <body>
+        <TimezoneCookieSync />
+        <DataRefreshSync />
         {children}
         <BottomNav />
       </body>

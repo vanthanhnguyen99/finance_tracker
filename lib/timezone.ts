@@ -45,7 +45,9 @@ function getOffsetMs(date: Date, timeZone: string) {
     parts.minute,
     parts.second
   );
-  return asUtc - date.getTime();
+  // Intl parts have second precision, so exclude milliseconds when calculating the zone offset.
+  const dateAtWholeSecond = date.getTime() - date.getUTCMilliseconds();
+  return asUtc - dateAtWholeSecond;
 }
 
 export function resolveTimeZone(timeZone: string | null | undefined) {
