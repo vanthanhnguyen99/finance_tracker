@@ -19,7 +19,7 @@ function getLocalDateTimeInputValue(date = new Date()) {
   return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())}T${pad(date.getHours())}:${pad(date.getMinutes())}`;
 }
 
-export default function AddPage() {
+export default function AddPage({ primaryCurrency }: { primaryCurrency: "DKK" | "VND" }) {
   const [tab, setTab] = useState<TabKey>("expense");
   const [message, setMessage] = useState<{ text: string; tone: "success" | "error" } | null>(null);
   const [logTimeExpanded, setLogTimeExpanded] = useState(false);
@@ -241,7 +241,7 @@ export default function AddPage() {
             onSubmit={(event) => {
               event.preventDefault();
               const data = new FormData(event.currentTarget);
-              const currency = (data.get("currency") as "DKK" | "VND") || "DKK";
+              const currency = (data.get("currency") as "DKK" | "VND") || primaryCurrency;
               submitTransaction("INCOME", currency, event.currentTarget);
             }}
           >
@@ -264,7 +264,7 @@ export default function AddPage() {
                   onBlur={handleAmountBlur}
                   onFocus={handleAmountFocus}
                 />
-                <select className="select" name="currency" defaultValue="DKK" aria-label="Tiền tệ">
+                <select className="select" name="currency" defaultValue={primaryCurrency} aria-label="Tiền tệ">
                   <option value="DKK">DKK</option>
                   <option value="VND">VND</option>
                 </select>
@@ -300,7 +300,7 @@ export default function AddPage() {
             onSubmit={(event) => {
               event.preventDefault();
               const data = new FormData(event.currentTarget);
-              const currency = (data.get("currency") as "DKK" | "VND") || "DKK";
+              const currency = (data.get("currency") as "DKK" | "VND") || primaryCurrency;
               submitTransaction("EXPENSE", currency, event.currentTarget);
             }}
           >
@@ -323,7 +323,7 @@ export default function AddPage() {
                   onBlur={handleAmountBlur}
                   onFocus={handleAmountFocus}
                 />
-                <select className="select" name="currency" defaultValue="DKK" aria-label="Tiền tệ">
+                <select className="select" name="currency" defaultValue={primaryCurrency} aria-label="Tiền tệ">
                   <option value="DKK">DKK</option>
                   <option value="VND">VND</option>
                 </select>

@@ -29,8 +29,9 @@ export default async function History({
   const startDate = start ? parseDateInputInTimeZone(start, userTimeZone, false) ?? undefined : undefined;
   const endDate = end ? parseDateInputInTimeZone(end, userTimeZone, true) ?? undefined : undefined;
   const hasInvalidDate =
-    (startDate && Number.isNaN(startDate.getTime())) ||
-    (endDate && Number.isNaN(endDate.getTime()));
+    Boolean(start && !startDate) ||
+    Boolean(end && !endDate) ||
+    Boolean(startDate && endDate && startDate > endDate);
   const createdAt = !hasInvalidDate && (startDate || endDate)
     ? { gte: startDate, lte: endDate }
     : undefined;
@@ -51,7 +52,7 @@ export default async function History({
   const filterKey = [selectedType || "all", selectedCurrency || "all", start ?? "", end ?? ""].join(":");
 
   const [transactionsResult, exchangesResult] = await Promise.all([
-    includeTransactions
+    includeTransactions && !hasInvalidDate
       ? prisma.transaction.findMany({
           where: {
             userId: user.id,
@@ -72,7 +73,7 @@ export default async function History({
           }
         })
       : Promise.resolve(null),
-    includeExchanges
+    includeExchanges && !hasInvalidDate
       ? prisma.exchange.findMany({
           where: {
             userId: user.id,
@@ -141,7 +142,11 @@ export default async function History({
           <img src="/logo.svg" alt="" className="h-9 w-9 shrink-0" />
           <h1 className="truncate text-xl font-semibold text-ink">Giao dịch</h1>
         </div>
-        <ProfileMenu name={user.displayName} email={user.email} />
+        <ProfileMenu
+          name={user.displayName}
+          email={user.email}
+          primaryCurrency={user.primaryCurrency}
+        />
       </div>
 
       <form key={filterKey} className="card mt-6 grid gap-4" aria-label="Bộ lọc giao dịch">
@@ -215,6 +220,11 @@ export default async function History({
             Đặt lại
           </Link>
         </div>
+        {hasInvalidDate ? (
+          <p className="text-sm font-medium text-danger-dark" role="alert">
+            Khoảng ngày không hợp lệ. Vui lòng kiểm tra lại ngày bắt đầu và ngày kết thúc.
+          </p>
+        ) : null}
       </form>
 
       <HistoryList items={items} />

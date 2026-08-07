@@ -1,6 +1,6 @@
 import { prisma } from "@/lib/db";
 import Link from "next/link";
-import { getPreviousRangeFromBounds, getRange, type TimeFilter } from "@/lib/date";
+import { getPreviousRange, getPreviousRangeFromBounds, getRange, type TimeFilter } from "@/lib/date";
 import { getWalletBalances } from "@/lib/wallet";
 import { formatMoney } from "@/lib/money";
 import { ExpenseCurrencyToggle } from "./components/ExpenseCurrencyToggle";
@@ -49,6 +49,7 @@ export default async function Dashboard({
 }) {
   noStore();
   const user = await requireActivePageSession();
+  const primaryCurrency = user.primaryCurrency;
   const cookieStore = await cookies();
   const userTimeZone = resolveTimeZone(cookieStore.get(TIMEZONE_COOKIE_NAME)?.value);
   const resolvedSearchParams = await searchParams;
@@ -61,7 +62,10 @@ export default async function Dashboard({
     filterParam === "last30"
       ? filterParam
       : "month";
-  const expenseCurrency = resolvedSearchParams.expenseCurrency ?? "DKK";
+  const expenseCurrency =
+    resolvedSearchParams.expenseCurrency === "DKK" || resolvedSearchParams.expenseCurrency === "VND"
+      ? resolvedSearchParams.expenseCurrency
+      : primaryCurrency;
 
   const parsedFrom = parseDateInputInTimeZone(resolvedSearchParams.from, userTimeZone, false);
   const parsedTo = parseDateInputInTimeZone(resolvedSearchParams.to, userTimeZone, true);
@@ -69,8 +73,39 @@ export default async function Dashboard({
   const presetRange = getRange(filter, userTimeZone);
   const start = hasCustomRange ? parsedFrom! : presetRange.start;
   const end = hasCustomRange ? parsedTo! : presetRange.end;
-  const previousRange = getPreviousRangeFromBounds(start, end);
-  const previousRange2 = getPreviousRangeFromBounds(previousRange.start, previousRange.end);
+  const previousRange = hasCustomRange
+    ? getPreviousRangeFromBounds(start, end, userTimeZone)
+    : getPreviousRange(filter, userTimeZone, end);
+  const previousRange2 = getPreviousRangeFromBounds(
+    previousRange.start,
+    previousRange.end,
+    userTimeZone
+  );
+
+  const getShiftedDayBoundary = (value: Date, dayOffset: number, endOfDay = false) => {
+    const localDate = getDateInTimeZone(value, userTimeZone);
+    const marker = new Date(0);
+    marker.setUTCFullYear(localDate.year, localDate.month - 1, localDate.day + dayOffset);
+    marker.setUTCHours(12, 0, 0, 0);
+    return zonedDateTimeToUtc(
+      marker.getUTCFullYear(),
+      marker.getUTCMonth() + 1,
+      marker.getUTCDate(),
+      endOfDay ? 23 : 0,
+      endOfDay ? 59 : 0,
+      endOfDay ? 59 : 0,
+      endOfDay ? 999 : 0,
+      userTimeZone
+    );
+  };
+
+  const getCalendarDayOrdinal = (value: Date) => {
+    const localDate = getDateInTimeZone(value, userTimeZone);
+    const marker = new Date(0);
+    marker.setUTCFullYear(localDate.year, localDate.month - 1, localDate.day);
+    marker.setUTCHours(0, 0, 0, 0);
+    return Math.floor(marker.getTime() / 86400000);
+  };
   const presetTrendPeriods = !hasCustomRange
     ? (() => {
         if (filter === "month") {
@@ -115,12 +150,11 @@ export default async function Dashboard({
               : 30;
 
         return Array.from({ length: 3 }).map((_, index) => {
-          const startOfPeriod = new Date(presetRange.start);
-          startOfPeriod.setDate(startOfPeriod.getDate() - (2 - index) * periodDays);
-          startOfPeriod.setHours(0, 0, 0, 0);
-          const endOfPeriod = new Date(startOfPeriod);
-          endOfPeriod.setDate(endOfPeriod.getDate() + periodDays - 1);
-          endOfPeriod.setHours(23, 59, 59, 999);
+          const startOfPeriod = getShiftedDayBoundary(
+            presetRange.start,
+            -(2 - index) * periodDays
+          );
+          const endOfPeriod = getShiftedDayBoundary(startOfPeriod, periodDays - 1, true);
           return { start: startOfPeriod, end: endOfPeriod };
         });
       })()
@@ -159,11 +193,11 @@ export default async function Dashboard({
     return `${formatDateDash(rangeStart)}->${formatDateDash(rangeEnd)}`;
   };
 
-  const [trendTransactionsDkk, exchangeDkkEntries, balances, recentTransactions, recentExchanges] = await Promise.all([
+  const [trendTransactions, exchangeDkkEntries, balances, recentTransactions, recentExchanges] = await Promise.all([
     prisma.transaction.findMany({
       where: {
         userId: user.id,
-        currency: "DKK",
+        currency: primaryCurrency,
         createdAt: { gte: transactionMetricsStart, lte: end },
         type: { in: ["INCOME", "EXPENSE"] }
       },
@@ -233,13 +267,13 @@ export default async function Dashboard({
     return sum;
   };
 
-  const sumDkkTransactionsInRange = (
+  const sumTransactionsInRange = (
     rangeStart: Date,
     rangeEnd: Date,
     type: "INCOME" | "EXPENSE"
   ) => {
     let sum = 0;
-    for (const entry of trendTransactionsDkk) {
+    for (const entry of trendTransactions) {
       if (entry.type !== type) continue;
       if (entry.createdAt < rangeStart || entry.createdAt > rangeEnd) continue;
       if (type === "EXPENSE" && isCreditCardRepayment(entry.category, entry.paymentMethod)) {
@@ -250,15 +284,17 @@ export default async function Dashboard({
     return sum;
   };
 
-  const totalIncome = sumDkkTransactionsInRange(start, end, "INCOME");
-  const exchangeExpenseCurrent = sumExchangeDkkInRange(start, end);
-  const totalExpenseDkk =
-    sumDkkTransactionsInRange(start, end, "EXPENSE") + exchangeExpenseCurrent;
-  const netDkk = totalIncome - totalExpenseDkk;
-  const previousIncome = sumDkkTransactionsInRange(previousRange.start, previousRange.end, "INCOME");
+  const totalIncome = sumTransactionsInRange(start, end, "INCOME");
+  const exchangeExpenseDkkCurrent = sumExchangeDkkInRange(start, end);
+  const primaryExchangeExpense = primaryCurrency === "DKK" ? exchangeExpenseDkkCurrent : 0;
+  const totalExpense = sumTransactionsInRange(start, end, "EXPENSE") + primaryExchangeExpense;
+  const net = totalIncome - totalExpense;
+  const previousIncome = sumTransactionsInRange(previousRange.start, previousRange.end, "INCOME");
   const previousExpense =
-    sumDkkTransactionsInRange(previousRange.start, previousRange.end, "EXPENSE") +
-    sumExchangeDkkInRange(previousRange.start, previousRange.end);
+    sumTransactionsInRange(previousRange.start, previousRange.end, "EXPENSE") +
+    (primaryCurrency === "DKK"
+      ? sumExchangeDkkInRange(previousRange.start, previousRange.end)
+      : 0);
   const previousNet = previousIncome - previousExpense;
 
   function formatDelta(currentValue: number, previousValue: number) {
@@ -272,8 +308,8 @@ export default async function Dashboard({
   }
 
   const incomeDelta = formatDelta(totalIncome, previousIncome);
-  const expenseDelta = formatDelta(totalExpenseDkk, previousExpense);
-  const netDelta = formatDelta(netDkk, previousNet);
+  const expenseDelta = formatDelta(totalExpense, previousExpense);
+  const netDelta = formatDelta(net, previousNet);
 
   function deltaLabel(delta: string) {
     if (delta === "0%") return "Không thay đổi so với kỳ trước";
@@ -287,21 +323,16 @@ export default async function Dashboard({
     return isIncrease === increaseIsGood ? "text-success-dark" : "text-danger-dark";
   }
 
-  const dayStart = new Date(start);
-  dayStart.setHours(0, 0, 0, 0);
-  const dayEnd = new Date(end);
-  dayEnd.setHours(23, 59, 59, 999);
-  const totalDays = Math.max(1, Math.floor((dayEnd.getTime() - dayStart.getTime()) / 86400000) + 1);
+  const dayStart = getShiftedDayBoundary(start, 0);
+  const dayEnd = end;
+  const totalDays = Math.max(1, getCalendarDayOrdinal(dayEnd) - getCalendarDayOrdinal(dayStart) + 1);
   const targetPoints = 3;
   const chunkSize = Math.max(1, Math.ceil(totalDays / targetPoints));
   const chunkCount = Math.ceil(totalDays / chunkSize);
 
   const trendBuckets = Array.from({ length: chunkCount }).map((_, index) => {
-    const chunkStart = new Date(dayStart);
-    chunkStart.setDate(dayStart.getDate() + index * chunkSize);
-    const chunkEnd = new Date(chunkStart);
-    chunkEnd.setDate(chunkStart.getDate() + chunkSize - 1);
-    chunkEnd.setHours(23, 59, 59, 999);
+    const chunkStart = getShiftedDayBoundary(dayStart, index * chunkSize);
+    const chunkEnd = getShiftedDayBoundary(chunkStart, chunkSize - 1, true);
     if (chunkEnd > dayEnd) chunkEnd.setTime(dayEnd.getTime());
 
     return {
@@ -312,11 +343,11 @@ export default async function Dashboard({
     };
   });
 
-  const currentRangeTransactionsDkk = trendTransactionsDkk.filter(
+  const currentRangeTransactions = trendTransactions.filter(
     (txn) => txn.createdAt >= start && txn.createdAt <= end
   );
 
-  for (const txn of currentRangeTransactionsDkk) {
+  for (const txn of currentRangeTransactions) {
     const bucket = trendBuckets.find(
       (item) => txn.createdAt >= item.start && txn.createdAt <= item.end
     );
@@ -341,7 +372,7 @@ export default async function Dashboard({
   const presetTrendData = recentPeriods.map((period) => {
     let income = 0;
     let expense = 0;
-    for (const txn of trendTransactionsDkk) {
+    for (const txn of trendTransactions) {
       if (txn.createdAt < period.start || txn.createdAt > period.end) continue;
       if (txn.type === "INCOME") income += txn.amount;
       if (txn.type === "EXPENSE" && !isCreditCardRepayment(txn.category, txn.paymentMethod)) {
@@ -438,7 +469,7 @@ export default async function Dashboard({
 
   const exchangeAmount =
     expenseCurrency === "DKK"
-      ? exchangeExpenseCurrent
+      ? exchangeExpenseDkkCurrent
       : 0;
 
   const breakdownItems = [
@@ -478,6 +509,10 @@ export default async function Dashboard({
     .join(", ");
 
   const hasTrendData = trendData.some((item) => item.income > 0 || item.expense > 0);
+  const walletCurrencies = [
+    primaryCurrency,
+    primaryCurrency === "DKK" ? "VND" : "DKK"
+  ] as const;
   const recentDateFormatter = new Intl.DateTimeFormat("vi-VN", {
     timeZone: userTimeZone,
     day: "2-digit",
@@ -517,7 +552,11 @@ export default async function Dashboard({
           <img src="/logo.svg" alt="" className="h-9 w-9 shrink-0" />
           <h1 className="truncate text-xl font-semibold text-ink">Tổng quan</h1>
         </div>
-        <ProfileMenu name={user.displayName} email={user.email} />
+        <ProfileMenu
+          name={user.displayName}
+          email={user.email}
+          primaryCurrency={primaryCurrency}
+        />
       </div>
 
       <TimeFilterTabs
@@ -538,28 +577,23 @@ export default async function Dashboard({
           <span className="chip">2 ví</span>
         </div>
         <div className="mt-3 grid grid-cols-2 divide-x divide-slate-100 border-t border-slate-100">
-          <div className="min-w-0 p-4">
-            <div className="flex items-center gap-2 text-sm font-medium text-slate-500">
-              <span className="inline-flex h-8 w-8 items-center justify-center rounded-lg bg-primary-50 text-primary-700">
-                <WalletIcon className="h-4 w-4" />
-              </span>
-              DKK
-            </div>
-            <p className="money-value mt-3 break-words text-lg font-bold leading-6 text-ink sm:text-xl">
-              {formatMoney(balances.balances.DKK, "DKK")}
-            </p>
-          </div>
-          <div className="min-w-0 p-4">
-            <div className="flex items-center gap-2 text-sm font-medium text-slate-500">
-              <span className="inline-flex h-8 w-8 items-center justify-center rounded-lg bg-slate-100 text-slate-600">
-                <WalletIcon className="h-4 w-4" />
-              </span>
-              VND
-            </div>
-            <p className="money-value mt-3 break-words text-lg font-bold leading-6 text-ink sm:text-xl">
-              {formatMoney(balances.balances.VND, "VND")}
-            </p>
-          </div>
+          {walletCurrencies.map((currency) => {
+            const isPrimary = currency === primaryCurrency;
+            return (
+              <div key={currency} className="min-w-0 p-4">
+                <div className="flex items-center gap-2 text-sm font-medium text-slate-500">
+                  <span className={`inline-flex h-8 w-8 items-center justify-center rounded-lg ${isPrimary ? "bg-primary-50 text-primary-700" : "bg-slate-100 text-slate-600"}`}>
+                    <WalletIcon className="h-4 w-4" />
+                  </span>
+                  {currency}
+                  {isPrimary ? <span className="text-[10px] font-semibold uppercase text-primary-600">Chính</span> : null}
+                </div>
+                <p className="money-value mt-3 break-words text-lg font-bold leading-6 text-ink sm:text-xl">
+                  {formatMoney(balances.balances[currency], currency)}
+                </p>
+              </div>
+            );
+          })}
         </div>
       </section>
 
@@ -568,10 +602,10 @@ export default async function Dashboard({
           <div className="min-w-0 p-4">
             <div className="flex items-center gap-2 text-sm font-medium text-slate-500">
               <IncomeIcon className="h-5 w-5 text-success-dark" />
-              Thu nhập (DKK)
+              Thu nhập ({primaryCurrency})
             </div>
             <p className="money-value mt-2 break-words text-xl font-bold leading-7 text-success-dark">
-              {formatMoney(totalIncome, "DKK")}
+              {formatMoney(totalIncome, primaryCurrency)}
             </p>
             <p className={`mt-2 text-xs leading-4 ${deltaTone(incomeDelta, true)}`}>
               {deltaLabel(incomeDelta)}
@@ -580,10 +614,10 @@ export default async function Dashboard({
           <div className="min-w-0 p-4">
             <div className="flex items-center gap-2 text-sm font-medium text-slate-500">
               <ExpenseIcon className="h-5 w-5 text-danger-dark" />
-              Chi tiêu (DKK)
+              Chi tiêu ({primaryCurrency})
             </div>
             <p className="money-value mt-2 break-words text-xl font-bold leading-7 text-danger-dark">
-              {formatMoney(totalExpenseDkk, "DKK")}
+              {formatMoney(totalExpense, primaryCurrency)}
             </p>
             <p className={`mt-2 text-xs leading-4 ${deltaTone(expenseDelta, false)}`}>
               {deltaLabel(expenseDelta)}
@@ -593,7 +627,7 @@ export default async function Dashboard({
         <div className="flex flex-wrap items-center justify-between gap-2 border-t border-slate-100 bg-slate-50 px-4 py-3">
           <div>
             <p className="text-xs text-slate-500">Còn lại trong kỳ</p>
-            <p className="money-value mt-0.5 text-base font-semibold text-ink">{formatMoney(netDkk, "DKK")}</p>
+            <p className="money-value mt-0.5 text-base font-semibold text-ink">{formatMoney(net, primaryCurrency)}</p>
           </div>
           <p className={`text-xs ${deltaTone(netDelta, true)}`}>{deltaLabel(netDelta)}</p>
         </div>
@@ -604,7 +638,7 @@ export default async function Dashboard({
           <div className="flex items-center justify-between gap-3">
             <div>
               <h2 id="trend-title" className="text-xl font-semibold text-ink">Xu hướng thu và chi</h2>
-              <p className="mt-0.5 text-sm text-slate-500">Đơn vị DKK · {periodLabel}</p>
+              <p className="mt-0.5 text-sm text-slate-500">Đơn vị {primaryCurrency} · {periodLabel}</p>
             </div>
             {hasTrendData ? <span className="chip">{hasCustomRange ? `${trendData.length} mốc` : "3 kỳ"}</span> : null}
           </div>

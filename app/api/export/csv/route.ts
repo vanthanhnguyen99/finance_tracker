@@ -22,8 +22,17 @@ export async function GET(req: NextRequest) {
   const userTimeZone = getTimeZoneFromRequest(req);
   const type = searchParams.get("type");
   const currency = searchParams.get("currency");
-  const startDate = parseDateInputInTimeZone(searchParams.get("start"), userTimeZone, false) ?? undefined;
-  const endDate = parseDateInputInTimeZone(searchParams.get("end"), userTimeZone, true) ?? undefined;
+  const startParam = searchParams.get("start");
+  const endParam = searchParams.get("end");
+  const startDate = parseDateInputInTimeZone(startParam, userTimeZone, false) ?? undefined;
+  const endDate = parseDateInputInTimeZone(endParam, userTimeZone, true) ?? undefined;
+  if (
+    (startParam && !startDate) ||
+    (endParam && !endDate) ||
+    (startDate && endDate && startDate > endDate)
+  ) {
+    return NextResponse.json({ error: "Invalid date range" }, { status: 400 });
+  }
   const createdAt =
     startDate || endDate
       ? {

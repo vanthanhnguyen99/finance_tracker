@@ -1,9 +1,9 @@
-import { NextRequest } from "next/server";
+import type { NextRequest } from "next/server";
 
 export const TIMEZONE_COOKIE_NAME = "finance_tz";
 export const DEFAULT_TIME_ZONE = "UTC";
 
-type DateParts = {
+export type DateParts = {
   year: number;
   month: number;
   day: number;
@@ -21,29 +21,47 @@ function getDatePartsInTimeZone(date: Date, timeZone: string): DateParts {
     hour: "2-digit",
     minute: "2-digit",
     second: "2-digit",
-    hour12: false
+    hourCycle: "h23"
   });
   const raw = formatter.formatToParts(date);
   const pick = (type: string) => Number(raw.find((part) => part.type === type)?.value ?? "0");
+  const hour = pick("hour");
   return {
     year: pick("year"),
     month: pick("month"),
     day: pick("day"),
-    hour: pick("hour"),
+    // Some ICU builds still emit 24:00 for midnight even with a 0-23 hour cycle.
+    hour: hour === 24 ? 0 : hour,
     minute: pick("minute"),
     second: pick("second")
   };
 }
 
+function getUtcTimestamp(
+  year: number,
+  month: number,
+  day: number,
+  hour: number,
+  minute: number,
+  second: number,
+  millisecond: number
+) {
+  const date = new Date(0);
+  date.setUTCFullYear(year, month - 1, day);
+  date.setUTCHours(hour, minute, second, millisecond);
+  return date.getTime();
+}
+
 function getOffsetMs(date: Date, timeZone: string) {
   const parts = getDatePartsInTimeZone(date, timeZone);
-  const asUtc = Date.UTC(
+  const asUtc = getUtcTimestamp(
     parts.year,
-    parts.month - 1,
+    parts.month,
     parts.day,
     parts.hour,
     parts.minute,
-    parts.second
+    parts.second,
+    0
   );
   // Intl parts have second precision, so exclude milliseconds when calculating the zone offset.
   const dateAtWholeSecond = date.getTime() - date.getUTCMilliseconds();
@@ -74,6 +92,10 @@ export function getDateInTimeZone(date: Date, timeZone: string) {
   };
 }
 
+export function getDateTimeInTimeZone(date: Date, timeZone: string) {
+  return getDatePartsInTimeZone(date, timeZone);
+}
+
 export function getWeekdayInTimeZone(date: Date, timeZone: string) {
   const label = new Intl.DateTimeFormat("en-US", { timeZone, weekday: "short" }).format(date);
   const map: Record<string, number> = {
@@ -98,7 +120,7 @@ export function zonedDateTimeToUtc(
   millisecond: number,
   timeZone: string
 ) {
-  const baseUtcMs = Date.UTC(year, month - 1, day, hour, minute, second, millisecond);
+  const baseUtcMs = getUtcTimestamp(year, month, day, hour, minute, second, millisecond);
   let utcMs = baseUtcMs;
   for (let i = 0; i < 3; i += 1) {
     const offset = getOffsetMs(new Date(utcMs), timeZone);
@@ -115,6 +137,16 @@ export function parseDateInputInTimeZone(
   if (!value || !/^\d{4}-\d{2}-\d{2}$/.test(value)) return null;
   const [year, month, day] = value.split("-").map(Number);
   if (!year || !month || !day) return null;
+
+  const calendarDate = new Date(getUtcTimestamp(year, month, day, 0, 0, 0, 0));
+  if (
+    calendarDate.getUTCFullYear() !== year ||
+    calendarDate.getUTCMonth() + 1 !== month ||
+    calendarDate.getUTCDate() !== day
+  ) {
+    return null;
+  }
+
   return zonedDateTimeToUtc(
     year,
     month,

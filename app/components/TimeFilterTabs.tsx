@@ -29,6 +29,7 @@ export function TimeFilterTabs({
   const searchParams = useSearchParams();
   const [isOpen, setIsOpen] = useState(false);
   const [isCustomOpen, setIsCustomOpen] = useState(customActive);
+  const [customError, setCustomError] = useState("");
   const activeLabel = customActive
     ? "Tùy chỉnh"
     : filters.find((item) => item.key === active)?.label ?? "Tháng này";
@@ -68,7 +69,11 @@ export function TimeFilterTabs({
   }
 
   function applyCustomRange(from: string, to: string) {
-    if (!from || !to || from > to) return;
+    if (!from || !to || from > to) {
+      setCustomError("Khoảng ngày không hợp lệ.");
+      return;
+    }
+    setCustomError("");
     localStorage.setItem(STORAGE_KEY, "month");
     const params = new URLSearchParams(searchParams.toString());
     params.delete("filter");
@@ -169,6 +174,9 @@ export function TimeFilterTabs({
                     <input type="date" name="to" defaultValue={toDate} className="input px-3" />
                   </label>
                 </div>
+                {customError ? (
+                  <p className="text-sm font-medium text-danger-dark" role="alert">{customError}</p>
+                ) : null}
                 <button type="submit" className="button">Áp dụng</button>
               </form>
             ) : null}
