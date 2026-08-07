@@ -227,7 +227,7 @@ export default async function History({
         ) : null}
       </form>
 
-      <HistoryList items={items} />
+      <HistoryList items={items} timeZone={userTimeZone} />
     </main>
   );
 }

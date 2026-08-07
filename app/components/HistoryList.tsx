@@ -32,39 +32,50 @@ export type HistoryItem =
       feeAmountDkk?: number;
     };
 
-function formatDate(date: string) {
+function formatDate(date: string, timeZone: string) {
   return new Intl.DateTimeFormat("vi-VN", {
+    timeZone,
     dateStyle: "medium",
     timeStyle: "short"
   }).format(new Date(date));
 }
 
-function formatTime(date: string) {
+function formatTime(date: string, timeZone: string) {
   return new Intl.DateTimeFormat("vi-VN", {
+    timeZone,
     hour: "2-digit",
     minute: "2-digit"
   }).format(new Date(date));
 }
 
-function getDayKey(date: string) {
-  const value = new Date(date);
-  return `${value.getFullYear()}-${value.getMonth()}-${value.getDate()}`;
+function getDayKey(date: string | Date, timeZone: string) {
+  const parts = new Intl.DateTimeFormat("en-CA", {
+    timeZone,
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit"
+  }).formatToParts(new Date(date));
+  const part = (type: Intl.DateTimeFormatPartTypes) =>
+    parts.find((value) => value.type === type)?.value ?? "";
+  return `${part("year")}-${part("month")}-${part("day")}`;
 }
 
-function formatDayLabel(date: string) {
+function formatDayLabel(date: string, timeZone: string) {
   const value = new Date(date);
   const today = new Date();
-  const yesterday = new Date(today);
-  yesterday.setDate(today.getDate() - 1);
+  const todayKey = getDayKey(today, timeZone);
+  const [year, month, day] = todayKey.split("-").map(Number);
+  const yesterday = new Date(Date.UTC(year, month - 1, day - 1, 12));
 
-  if (value.toDateString() === today.toDateString()) return "Hôm nay";
-  if (value.toDateString() === yesterday.toDateString()) return "Hôm qua";
+  if (getDayKey(value, timeZone) === todayKey) return "Hôm nay";
+  if (getDayKey(value, timeZone) === getDayKey(yesterday, "UTC")) return "Hôm qua";
 
   return new Intl.DateTimeFormat("vi-VN", {
+    timeZone,
     weekday: "long",
     day: "2-digit",
     month: "2-digit",
-    year: value.getFullYear() === today.getFullYear() ? undefined : "numeric"
+    year: getDayKey(value, timeZone).slice(0, 4) === todayKey.slice(0, 4) ? undefined : "numeric"
   }).format(value);
 }
 
@@ -89,7 +100,7 @@ function paymentMethodLabel(value: "CASH" | "CREDIT_CARD" | null | undefined) {
   return value === "CREDIT_CARD" ? "Thẻ tín dụng" : "Tiền mặt";
 }
 
-export function HistoryList({ items }: { items: HistoryItem[] }) {
+export function HistoryList({ items, timeZone }: { items: HistoryItem[]; timeZone: string }) {
   const [openId, setOpenId] = useState<string | null>(null);
   const [editingId, setEditingId] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
@@ -178,13 +189,13 @@ export function HistoryList({ items }: { items: HistoryItem[] }) {
   const groupedItems = items.reduce<
     { key: string; label: string; items: HistoryItem[] }[]
   >((groups, item) => {
-    const key = getDayKey(item.createdAt);
+    const key = getDayKey(item.createdAt, timeZone);
     const lastGroup = groups[groups.length - 1];
     if (lastGroup?.key === key) {
       lastGroup.items.push(item);
       return groups;
     }
-    groups.push({ key, label: formatDayLabel(item.createdAt), items: [item] });
+    groups.push({ key, label: formatDayLabel(item.createdAt, timeZone), items: [item] });
     return groups;
   }, []);
 
@@ -248,7 +259,7 @@ export function HistoryList({ items }: { items: HistoryItem[] }) {
                         <span className="min-w-0 flex-1">
                           <span className="block truncate text-sm font-semibold text-ink">{itemTitle(item)}</span>
                           <span className="mt-0.5 block truncate text-xs text-slate-500">
-                            {itemTypeLabel(item)} · {formatTime(item.createdAt)}
+                            {itemTypeLabel(item)} · {formatTime(item.createdAt, timeZone)}
                           </span>
                         </span>
                         <span className="flex max-w-[46%] shrink-0 items-center gap-1.5 text-right">
@@ -386,7 +397,7 @@ export function HistoryList({ items }: { items: HistoryItem[] }) {
                               <dl className="grid gap-2 text-sm text-slate-600 sm:grid-cols-2">
                                 <div>
                                   <dt className="text-xs text-slate-400">Thời gian</dt>
-                                  <dd className="mt-0.5 font-medium text-slate-700">{formatDate(item.createdAt)}</dd>
+                                  <dd className="mt-0.5 font-medium text-slate-700">{formatDate(item.createdAt, timeZone)}</dd>
                                 </div>
                                 {"category" in item && item.category ? (
                                   <div>
