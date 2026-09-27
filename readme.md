@@ -53,6 +53,8 @@
 
 **Chi tiêu**:
 - Tiền thuê nhà
+- Đi chợ
+- Tiền mừng
 - Mua sắm
 - Tín dụng
 - Gửi về gia đình

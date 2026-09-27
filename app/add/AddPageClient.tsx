@@ -334,6 +334,8 @@ export default function AddPage({ primaryCurrency }: { primaryCurrency: "DKK" | 
               <select className="select" name="category" defaultValue="">
                 <option value="">Chọn danh mục</option>
                 <option value="Tiền thuê nhà">Tiền thuê nhà</option>
+                <option value="Đi chợ">Đi chợ</option>
+                <option value="Tiền mừng">Tiền mừng</option>
                 <option value="Mua sắm">Mua sắm</option>
                 <option value="Tín dụng">Tín dụng</option>
                 <option value="Gửi về gia đình">Gửi về gia đình</option>
