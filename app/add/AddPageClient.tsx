@@ -1,8 +1,10 @@
 "use client";
 
+import Link from "next/link";
 import { useEffect, useRef, useState } from "react";
 import { formatAmountForInput, normalizeAmountForApi } from "@/lib/money";
-import { LogoutButton } from "../components/LogoutButton";
+import { ArrowLeftIcon, CalendarIcon, ChevronDownIcon } from "../components/AppIcons";
+import { markFinanceDataChanged } from "../components/DataRefreshSync";
 
 const tabs = [
   { key: "expense", label: "Chi tiêu" },
@@ -17,11 +19,12 @@ function getLocalDateTimeInputValue(date = new Date()) {
   return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())}T${pad(date.getHours())}:${pad(date.getMinutes())}`;
 }
 
-export default function AddPage() {
+export default function AddPage({ primaryCurrency }: { primaryCurrency: "DKK" | "VND" }) {
   const [tab, setTab] = useState<TabKey>("expense");
   const [message, setMessage] = useState<{ text: string; tone: "success" | "error" } | null>(null);
   const [logTimeExpanded, setLogTimeExpanded] = useState(false);
   const [logTimeValue, setLogTimeValue] = useState("");
+  const [isSubmitting, setIsSubmitting] = useState(false);
   const hideTimer = useRef<NodeJS.Timeout | null>(null);
 
   useEffect(() => {
@@ -54,17 +57,21 @@ export default function AddPage() {
 
   function renderLogTimeControl() {
     return (
-      <div className="rounded-xl border border-slate-200 bg-slate-50 p-3">
+      <div className="rounded-control border border-slate-200 bg-slate-50 p-3">
         <button
           type="button"
           onClick={toggleLogTime}
-          className="flex w-full items-center justify-between rounded-lg px-1 py-1 text-left text-sm font-semibold text-slate-600"
+          className="flex min-h-11 w-full items-center justify-between rounded-lg px-1 text-left text-sm font-semibold text-slate-700 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary-300"
+          aria-expanded={logTimeExpanded}
         >
-          <span>{logTimeExpanded ? "Ẩn chỉnh thời gian log" : "Chỉnh thời gian log"}</span>
-          <span className="text-slate-400">{logTimeExpanded ? "▴" : "▾"}</span>
+          <span className="flex items-center gap-2">
+            <CalendarIcon className="h-5 w-5 text-slate-500" />
+            {logTimeExpanded ? "Dùng thời gian tùy chỉnh" : "Chỉnh thời gian giao dịch"}
+          </span>
+          <ChevronDownIcon className={`h-5 w-5 text-slate-400 transition ${logTimeExpanded ? "rotate-180" : ""}`} />
         </button>
         {logTimeExpanded ? (
-          <label className="mt-3 grid gap-1 text-[10px] font-semibold uppercase tracking-wide text-slate-400">
+          <label className="form-label mt-3">
             Thời gian giao dịch
             <input
               className="input"
@@ -97,6 +104,7 @@ export default function AddPage() {
   }
 
   async function submitTransaction(type: "INCOME" | "EXPENSE", currency: "DKK" | "VND", form: HTMLFormElement) {
+    if (isSubmitting) return;
     const data = new FormData(form);
     const amountMajor = normalizeAmount(data.get("amount"));
     const note = data.get("note");
@@ -105,35 +113,44 @@ export default function AddPage() {
     const paymentMethod = typeof paymentMethodRaw === "string" ? paymentMethodRaw : undefined;
     const createdAt = normalizeCreatedAtForApi(logTimeExpanded ? logTimeValue : "");
 
-    const res = await fetch("/api/transactions", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        type,
-        currency,
-        amountMajor,
-        note,
-        category,
-        ...(type === "EXPENSE" ? { paymentMethod } : {}),
-        createdAt
-      })
-    });
+    setIsSubmitting(true);
+    try {
+      const res = await fetch("/api/transactions", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          type,
+          currency,
+          amountMajor,
+          note,
+          category,
+          ...(type === "EXPENSE" ? { paymentMethod } : {}),
+          createdAt
+        })
+      });
 
-    if (!res.ok) {
-      const payload = await res.json();
-      setMessage({ text: payload.error ?? "Failed", tone: "error" });
-      return;
+      if (!res.ok) {
+        const payload = await res.json();
+        setMessage({ text: payload.error ?? "Không thể lưu giao dịch. Vui lòng thử lại.", tone: "error" });
+        return;
+      }
+
+      form.reset();
+      markFinanceDataChanged();
+      setLogTimeExpanded(false);
+      setLogTimeValue("");
+      setMessage({ text: "Đã lưu giao dịch", tone: "success" });
+      if (hideTimer.current) clearTimeout(hideTimer.current);
+      hideTimer.current = setTimeout(() => setMessage(null), 5000);
+    } catch {
+      setMessage({ text: "Không thể lưu giao dịch. Vui lòng kiểm tra kết nối.", tone: "error" });
+    } finally {
+      setIsSubmitting(false);
     }
-
-    form.reset();
-    setLogTimeExpanded(false);
-    setLogTimeValue("");
-    setMessage({ text: "Lưu thành công", tone: "success" });
-    if (hideTimer.current) clearTimeout(hideTimer.current);
-    hideTimer.current = setTimeout(() => setMessage(null), 5000);
   }
 
   async function submitExchange(form: HTMLFormElement) {
+    if (isSubmitting) return;
     const data = new FormData(form);
     const fromAmountDkk = normalizeAmount(data.get("fromAmountDkk"));
     const toAmountVnd = normalizeAmount(data.get("toAmountVnd"));
@@ -142,212 +159,291 @@ export default function AddPage() {
     const provider = data.get("provider");
     const createdAt = normalizeCreatedAtForApi(logTimeExpanded ? logTimeValue : "");
 
-    const res = await fetch("/api/exchange", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        fromAmountDkk,
-        toAmountVnd,
-        feeAmount: feeAmount || undefined,
-        feeCurrency: feeAmount ? feeCurrency : undefined,
-        provider,
-        createdAt
-      })
-    });
+    setIsSubmitting(true);
+    try {
+      const res = await fetch("/api/exchange", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          fromAmountDkk,
+          toAmountVnd,
+          feeAmount: feeAmount || undefined,
+          feeCurrency: feeAmount ? feeCurrency : undefined,
+          provider,
+          createdAt
+        })
+      });
 
-    if (!res.ok) {
-      const payload = await res.json();
-      setMessage({ text: payload.error ?? "Failed", tone: "error" });
-      return;
+      if (!res.ok) {
+        const payload = await res.json();
+        setMessage({ text: payload.error ?? "Không thể lưu giao dịch. Vui lòng thử lại.", tone: "error" });
+        return;
+      }
+
+      form.reset();
+      markFinanceDataChanged();
+      setLogTimeExpanded(false);
+      setLogTimeValue("");
+      setMessage({ text: "Đã lưu giao dịch đổi tiền", tone: "success" });
+      if (hideTimer.current) clearTimeout(hideTimer.current);
+      hideTimer.current = setTimeout(() => setMessage(null), 5000);
+    } catch {
+      setMessage({ text: "Không thể lưu giao dịch. Vui lòng kiểm tra kết nối.", tone: "error" });
+    } finally {
+      setIsSubmitting(false);
     }
-
-    form.reset();
-    setLogTimeExpanded(false);
-    setLogTimeValue("");
-    setMessage({ text: "Lưu đổi tiền thành công", tone: "success" });
-    if (hideTimer.current) clearTimeout(hideTimer.current);
-    hideTimer.current = setTimeout(() => setMessage(null), 5000);
   }
 
   return (
-    <main className="container-page">
+    <main className="container-page app-enter pb-32 md:pb-10">
       <div className="hero-bar">
-        <div>
-          <p className="text-xs uppercase tracking-widest text-slate-400">Thêm nhanh</p>
-          <h1 className="text-lg font-semibold text-ink">Giao dịch mới</h1>
+        <div className="flex min-w-0 items-center gap-2">
+          <Link href="/" prefetch={false} className="icon-button -ml-2" aria-label="Quay lại tổng quan">
+            <ArrowLeftIcon className="h-6 w-6" />
+          </Link>
+          <div className="min-w-0">
+            <p className="text-xs font-medium text-slate-500">Thêm nhanh</p>
+            <h1 className="truncate text-xl font-semibold text-ink">Giao dịch mới</h1>
+          </div>
         </div>
-        <div className="flex items-center gap-2">
-          <span className="chip">DKK / VND</span>
-          <LogoutButton />
-        </div>
+        <span className="chip">DKK · VND</span>
       </div>
 
-      <div className="mt-6 flex flex-wrap gap-2">
-        {tabs.map((item) => (
-          <button
-            key={item.key}
-            onClick={() => setTab(item.key)}
-            className={`rounded-full border px-4 py-2 text-xs font-semibold ${
-              tab === item.key
-                ? "border-transparent bg-ink text-white"
-                : "border-slate-200 text-slate-500"
-            }`}
+      <div className="mx-auto w-full max-w-xl">
+        <div className="segmented-control mt-6 grid-cols-3" role="tablist" aria-label="Loại giao dịch">
+          {tabs.map((item) => (
+            <button
+              key={item.key}
+              type="button"
+              role="tab"
+              aria-selected={tab === item.key}
+              onClick={() => setTab(item.key)}
+              className={`segmented-item ${tab === item.key ? "segmented-item-active" : ""}`}
+            >
+              {item.label}
+            </button>
+          ))}
+        </div>
+
+        {message ? (
+          <div
+            role="status"
+            aria-live="polite"
+            className={`mt-4 alert ${message.tone === "success" ? "border-emerald-200 bg-success-light text-success-dark" : "border-red-200 bg-danger-light text-danger-dark"}`}
           >
-            {item.label}
-          </button>
-        ))}
+            {message.text}
+          </div>
+        ) : null}
+
+        {tab === "income" && (
+          <form
+            className="transaction-form mt-6"
+            onSubmit={(event) => {
+              event.preventDefault();
+              const data = new FormData(event.currentTarget);
+              const currency = (data.get("currency") as "DKK" | "VND") || primaryCurrency;
+              submitTransaction("INCOME", currency, event.currentTarget);
+            }}
+          >
+            <div>
+              <h2 className="text-lg font-semibold text-ink">Thông tin khoản thu</h2>
+              <p className="mt-1 text-sm text-slate-500">Ghi lại nguồn tiền vừa nhận.</p>
+            </div>
+            <label className="form-label">
+              Số tiền
+              <div className="grid grid-cols-[minmax(0,1fr)_108px] gap-2">
+                <input
+                  className="input money-value text-lg font-semibold"
+                  name="amount"
+                  type="text"
+                  inputMode="decimal"
+                  placeholder="0"
+                  autoFocus
+                  required
+                  onInput={handleAmountInput}
+                  onBlur={handleAmountBlur}
+                  onFocus={handleAmountFocus}
+                />
+                <select className="select" name="currency" defaultValue={primaryCurrency} aria-label="Tiền tệ">
+                  <option value="DKK">DKK</option>
+                  <option value="VND">VND</option>
+                </select>
+              </div>
+            </label>
+            <label className="form-label">
+              Danh mục
+              <select className="select" name="category" defaultValue="">
+                <option value="">Chọn danh mục</option>
+                <option value="Lương">Lương</option>
+                <option value="Người eo gửi">Người eo gửi</option>
+                <option value="Người vay gửi">Người vay gửi</option>
+              </select>
+            </label>
+            <label className="form-label">
+              Ghi chú <span className="font-normal text-slate-400">(không bắt buộc)</span>
+              <input className="input" name="note" type="text" placeholder="Ví dụ: Lương tháng này" />
+            </label>
+            {renderLogTimeControl()}
+            <div className="form-actions">
+              <div className="form-actions-inner">
+                <button className="button" type="submit" disabled={isSubmitting}>
+                  {isSubmitting ? "Đang lưu..." : "Lưu thu nhập"}
+                </button>
+              </div>
+            </div>
+          </form>
+        )}
+
+        {tab === "expense" && (
+          <form
+            className="transaction-form mt-6"
+            onSubmit={(event) => {
+              event.preventDefault();
+              const data = new FormData(event.currentTarget);
+              const currency = (data.get("currency") as "DKK" | "VND") || primaryCurrency;
+              submitTransaction("EXPENSE", currency, event.currentTarget);
+            }}
+          >
+            <div>
+              <h2 className="text-lg font-semibold text-ink">Thông tin khoản chi</h2>
+              <p className="mt-1 text-sm text-slate-500">Nhập số tiền trước, các mục còn lại có thể chọn nhanh.</p>
+            </div>
+            <label className="form-label">
+              Số tiền
+              <div className="grid grid-cols-[minmax(0,1fr)_108px] gap-2">
+                <input
+                  className="input money-value text-lg font-semibold"
+                  name="amount"
+                  type="text"
+                  inputMode="decimal"
+                  placeholder="0"
+                  autoFocus
+                  required
+                  onInput={handleAmountInput}
+                  onBlur={handleAmountBlur}
+                  onFocus={handleAmountFocus}
+                />
+                <select className="select" name="currency" defaultValue={primaryCurrency} aria-label="Tiền tệ">
+                  <option value="DKK">DKK</option>
+                  <option value="VND">VND</option>
+                </select>
+              </div>
+            </label>
+            <label className="form-label">
+              Danh mục
+              <select className="select" name="category" defaultValue="">
+                <option value="">Chọn danh mục</option>
+                <option value="Tiền thuê nhà">Tiền thuê nhà</option>
+                <option value="Mua sắm">Mua sắm</option>
+                <option value="Tín dụng">Tín dụng</option>
+                <option value="Gửi về gia đình">Gửi về gia đình</option>
+                <option value="Khoản cho mượn">Khoản cho mượn</option>
+                <option value="Hoàn trả tiền mượn">Hoàn trả tiền mượn</option>
+              </select>
+            </label>
+            <label className="form-label">
+              Phương thức thanh toán
+              <select className="select" name="paymentMethod" defaultValue="CASH">
+                <option value="CASH">Tiền mặt</option>
+                <option value="CREDIT_CARD">Thẻ tín dụng</option>
+              </select>
+            </label>
+            <p className="rounded-control bg-primary-50 px-3 py-2 text-xs leading-5 text-primary-800">
+              Nếu mua bằng thẻ, chọn <strong>Thẻ tín dụng</strong>. Khi trả thẻ cuối kỳ, dùng danh mục <strong>Tín dụng</strong> và phương thức <strong>Tiền mặt</strong>.
+            </p>
+            <label className="form-label">
+              Ghi chú <span className="font-normal text-slate-400">(không bắt buộc)</span>
+              <input className="input" name="note" type="text" placeholder="Ví dụ: Đi siêu thị" />
+            </label>
+            {renderLogTimeControl()}
+            <div className="form-actions">
+              <div className="form-actions-inner">
+                <button className="button" type="submit" disabled={isSubmitting}>
+                  {isSubmitting ? "Đang lưu..." : "Lưu chi tiêu"}
+                </button>
+              </div>
+            </div>
+          </form>
+        )}
+
+        {tab === "exchange" && (
+          <form
+            className="transaction-form mt-6"
+            onSubmit={(event) => {
+              event.preventDefault();
+              submitExchange(event.currentTarget);
+            }}
+          >
+            <div>
+              <h2 className="text-lg font-semibold text-ink">Đổi DKK sang VND</h2>
+              <p className="mt-1 text-sm text-slate-500">Ghi lại số tiền gửi, số tiền nhận và phí giao dịch.</p>
+            </div>
+            <label className="form-label">
+              Số DKK đổi
+              <input
+                className="input money-value text-lg font-semibold"
+                name="fromAmountDkk"
+                type="text"
+                inputMode="decimal"
+                placeholder="0 DKK"
+                autoFocus
+                required
+                onInput={handleAmountInput}
+                onBlur={handleAmountBlur}
+                onFocus={handleAmountFocus}
+              />
+            </label>
+            <label className="form-label">
+              Số VND nhận
+              <input
+                className="input money-value text-lg font-semibold"
+                name="toAmountVnd"
+                type="text"
+                inputMode="decimal"
+                placeholder="0 VND"
+                required
+                onInput={handleAmountInput}
+                onBlur={handleAmountBlur}
+                onFocus={handleAmountFocus}
+              />
+            </label>
+            <div className="grid grid-cols-[minmax(0,1fr)_132px] gap-2">
+              <label className="form-label">
+                Phí <span className="font-normal text-slate-400">(tùy chọn)</span>
+                <input
+                  className="input"
+                  name="feeAmount"
+                  type="text"
+                  inputMode="decimal"
+                  placeholder="0"
+                  onInput={handleAmountInput}
+                  onBlur={handleAmountBlur}
+                  onFocus={handleAmountFocus}
+                />
+              </label>
+              <label className="form-label">
+                Đơn vị phí
+                <select className="select" name="feeCurrency" defaultValue="DKK">
+                  <option value="DKK">DKK</option>
+                  <option value="VND">VND</option>
+                </select>
+              </label>
+            </div>
+            <label className="form-label">
+              Nhà cung cấp <span className="font-normal text-slate-400">(không bắt buộc)</span>
+              <input className="input" name="provider" type="text" placeholder="Tên dịch vụ đổi tiền" />
+            </label>
+            {renderLogTimeControl()}
+            <div className="form-actions">
+              <div className="form-actions-inner">
+                <button className="button" type="submit" disabled={isSubmitting}>
+                  {isSubmitting ? "Đang lưu..." : "Lưu giao dịch đổi tiền"}
+                </button>
+              </div>
+            </div>
+          </form>
+        )}
       </div>
-
-      {message ? (
-        <div
-          className={`mt-4 alert ${message.tone === "success" ? "border-emerald-200 bg-emerald-50 text-emerald-700" : "border-rose-200 bg-rose-50 text-rose-700"}`}
-        >
-          {message.text}
-        </div>
-      ) : null}
-
-      {tab === "income" && (
-        <form
-          className="mt-6 grid gap-4 card"
-          onSubmit={(event) => {
-            event.preventDefault();
-            const data = new FormData(event.currentTarget);
-            const currency = (data.get("currency") as "DKK" | "VND") || "DKK";
-            submitTransaction("INCOME", currency, event.currentTarget);
-          }}
-        >
-          <p className="text-sm font-semibold text-ink">Thu nhập</p>
-          <div className="grid grid-cols-2 gap-2">
-            <input
-              className="input"
-              name="amount"
-              type="text"
-              inputMode="decimal"
-              placeholder="Số tiền"
-              required
-              onInput={handleAmountInput}
-              onBlur={handleAmountBlur}
-              onFocus={handleAmountFocus}
-            />
-            <select className="select" name="currency" defaultValue="DKK">
-              <option value="DKK">DKK</option>
-              <option value="VND">VND</option>
-            </select>
-          </div>
-          <select className="select" name="category" defaultValue="">
-            <option value="">Chọn danh mục</option>
-            <option value="Lương">Lương</option>
-            <option value="Người eo gửi">Người eo gửi</option>
-            <option value="Người vay gửi">Người vay gửi</option>
-          </select>
-          <input className="input" name="note" type="text" placeholder="Ghi chú (tuỳ chọn)" />
-          {renderLogTimeControl()}
-          <button className="button" type="submit">Lưu thu nhập</button>
-        </form>
-      )}
-
-      {tab === "expense" && (
-        <form
-          className="mt-6 grid gap-4 card"
-          onSubmit={(event) => {
-            event.preventDefault();
-            const data = new FormData(event.currentTarget);
-            const currency = (data.get("currency") as "DKK" | "VND") || "DKK";
-            submitTransaction("EXPENSE", currency, event.currentTarget);
-          }}
-        >
-          <p className="text-sm font-semibold text-ink">Chi tiêu</p>
-          <div className="grid grid-cols-2 gap-2">
-            <input
-              className="input"
-              name="amount"
-              type="text"
-              inputMode="decimal"
-              placeholder="Số tiền"
-              required
-              onInput={handleAmountInput}
-              onBlur={handleAmountBlur}
-              onFocus={handleAmountFocus}
-            />
-            <select className="select" name="currency" defaultValue="DKK">
-              <option value="DKK">DKK</option>
-              <option value="VND">VND</option>
-            </select>
-          </div>
-          <select className="select" name="category" defaultValue="">
-            <option value="">Chọn danh mục</option>
-            <option value="Tiền thuê nhà">Tiền thuê nhà</option>
-            <option value="Mua sắm">Mua sắm</option>
-            <option value="Tín dụng">Tín dụng</option>
-            <option value="Gửi về gia đình">Gửi về gia đình</option>
-            <option value="Khoản cho mượn">Khoản cho mượn</option>
-            <option value="Hoàn trả tiền mượn">Hoàn trả tiền mượn</option>
-          </select>
-          <select className="select" name="paymentMethod" defaultValue="CASH">
-            <option value="CASH">Tiền mặt</option>
-            <option value="CREDIT_CARD">Thẻ tín dụng</option>
-          </select>
-          <p className="text-xs text-slate-400">
-            Mua bằng thẻ: chọn <strong>Thẻ tín dụng</strong>. Khi trả thẻ cuối kỳ, log giao dịch danh mục <strong>Tín dụng</strong> với phương thức <strong>Tiền mặt</strong>.
-          </p>
-          <input className="input" name="note" type="text" placeholder="Ghi chú (tuỳ chọn)" />
-          {renderLogTimeControl()}
-          <button className="button" type="submit">Lưu chi tiêu</button>
-        </form>
-      )}
-
-      {tab === "exchange" && (
-        <form
-          className="mt-6 grid gap-4 card"
-          onSubmit={(event) => {
-            event.preventDefault();
-            submitExchange(event.currentTarget);
-          }}
-        >
-          <p className="text-sm font-semibold text-ink">Đổi DKK → VND</p>
-          <input
-            className="input"
-            name="fromAmountDkk"
-            type="text"
-            inputMode="decimal"
-            placeholder="DKK đổi"
-            required
-            onInput={handleAmountInput}
-            onBlur={handleAmountBlur}
-            onFocus={handleAmountFocus}
-          />
-          <input
-            className="input"
-            name="toAmountVnd"
-            type="text"
-            inputMode="decimal"
-            placeholder="VND nhận"
-            required
-            onInput={handleAmountInput}
-            onBlur={handleAmountBlur}
-            onFocus={handleAmountFocus}
-          />
-          <div className="grid grid-cols-2 gap-2">
-            <input
-              className="input"
-              name="feeAmount"
-              type="text"
-              inputMode="decimal"
-              placeholder="Phí (tuỳ chọn)"
-              onInput={handleAmountInput}
-              onBlur={handleAmountBlur}
-              onFocus={handleAmountFocus}
-            />
-            <select className="select" name="feeCurrency" defaultValue="DKK">
-              <option value="DKK">Phí bằng DKK</option>
-              <option value="VND">Phí bằng VND</option>
-            </select>
-          </div>
-          <input className="input" name="provider" type="text" placeholder="Nhà cung cấp (tuỳ chọn)" />
-          {renderLogTimeControl()}
-          <button className="button" type="submit">Lưu đổi tiền</button>
-        </form>
-      )}
     </main>
   );
 }

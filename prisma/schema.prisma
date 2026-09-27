@@ -94,6 +94,7 @@ model UserAllowlist {
   passwordHash String?
   note        String?
   status      UserStatus      @default(PENDING)
+  primaryCurrency Currency    @default(DKK)
   createdAt   DateTime        @default(now())
   updatedAt   DateTime        @updatedAt
   transactions Transaction[]

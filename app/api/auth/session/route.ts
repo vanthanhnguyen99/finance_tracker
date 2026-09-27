@@ -15,7 +15,8 @@ export async function GET(req: NextRequest) {
       id: user.id,
       displayName: user.displayName,
       email: user.email,
-      status: user.status
+      status: user.status,
+      primaryCurrency: user.primaryCurrency
     }
   });
 }

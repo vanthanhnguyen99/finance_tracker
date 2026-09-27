@@ -164,9 +164,11 @@ function normalizeUsers(records) {
     const id = String(row.id ?? "").trim();
     const displayName = String(row.displayName ?? "").trim();
     const status = String(row.status ?? "");
+    const primaryCurrency = String(row.primaryCurrency ?? "DKK");
     if (!id) throw new Error(`users[${index}].id is required`);
     if (!displayName) throw new Error(`users[${index}].displayName is required`);
     if (!allowedStatuses.has(status)) throw new Error(`users[${index}].status is invalid`);
+    if (!allowedCurrencies.has(primaryCurrency)) throw new Error(`users[${index}].primaryCurrency is invalid`);
     return {
       id,
       displayName,
@@ -174,6 +176,7 @@ function normalizeUsers(records) {
       passwordHash: row.passwordHash == null ? null : String(row.passwordHash),
       note: row.note == null ? null : String(row.note),
       status,
+      primaryCurrency,
       createdAt: parseIsoDate(row.createdAt, `users[${index}].createdAt`),
       updatedAt: parseIsoDate(row.updatedAt, `users[${index}].updatedAt`)
     };
@@ -891,6 +894,7 @@ const server = http.createServer(async (req, res) => {
           passwordHash: row.passwordHash,
           note: row.note,
           status: row.status,
+          primaryCurrency: row.primaryCurrency,
           createdAt: row.createdAt.toISOString(),
           updatedAt: row.updatedAt.toISOString()
         })),
@@ -1023,6 +1027,7 @@ const server = http.createServer(async (req, res) => {
               passwordHash: row.passwordHash,
               note: row.note,
               status: row.status,
+              primaryCurrency: row.primaryCurrency,
               createdAt: row.createdAt,
               updatedAt: row.updatedAt
             }))

@@ -27,6 +27,10 @@ export async function GET(req: NextRequest) {
   const toParam = searchParams.get("to");
   const fromDate = parseDateInputInTimeZone(fromParam, userTimeZone, false);
   const toDate = parseDateInputInTimeZone(toParam, userTimeZone, true);
+  const hasCustomParams = fromParam !== null || toParam !== null;
+  if (hasCustomParams && (!fromDate || !toDate || fromDate > toDate)) {
+    return NextResponse.json({ error: "Invalid date range" }, { status: 400 });
+  }
   const hasCustomRange = Boolean(fromDate && toDate && fromDate <= toDate);
 
   const { start, end } = hasCustomRange
@@ -45,13 +49,22 @@ export async function GET(req: NextRequest) {
     ]
   };
 
-  const [incomeDkk, expenseDkk, expenseVnd] = await Promise.all([
+  const [incomeDkk, incomeVnd, expenseDkk, expenseVnd] = await Promise.all([
     prisma.transaction.aggregate({
       _sum: { amount: true },
       where: {
         userId: user.id,
         type: "INCOME",
         currency: "DKK",
+        createdAt: { gte: start, lte: end }
+      }
+    }),
+    prisma.transaction.aggregate({
+      _sum: { amount: true },
+      where: {
+        userId: user.id,
+        type: "INCOME",
+        currency: "VND",
         createdAt: { gte: start, lte: end }
       }
     }),
@@ -79,10 +92,22 @@ export async function GET(req: NextRequest) {
 
   return NextResponse.json({
     filter: hasCustomRange ? "custom" : filter,
+    primaryCurrency: user.primaryCurrency,
     totals: {
       incomeDkk: incomeDkk._sum.amount ?? 0,
+      incomeVnd: incomeVnd._sum.amount ?? 0,
       expenseDkk: expenseDkk._sum.amount ?? 0,
       expenseVnd: expenseVnd._sum.amount ?? 0
+    },
+    primaryTotals: {
+      income:
+        user.primaryCurrency === "DKK"
+          ? incomeDkk._sum.amount ?? 0
+          : incomeVnd._sum.amount ?? 0,
+      expense:
+        user.primaryCurrency === "DKK"
+          ? expenseDkk._sum.amount ?? 0
+          : expenseVnd._sum.amount ?? 0
     }
   });
 }

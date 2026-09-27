@@ -16,9 +16,14 @@
   - Hiển thị số dư cả **Ví DKK** và **Ví VND** ở cụm card đầu trang
   - Expense breakdown theo danh mục + filter tiền tệ (DKK/VND)
   - Khi filter DKK: Exchange được tính như 1 loại chi tiêu “Chuyển đổi tiền tệ”
-  - Chart `Chi tiêu trong kỳ (DKK)` chỉ thể hiện transaction `EXPENSE` DKK (không cộng exchange)
-  - Ở chart `Xu hướng theo kỳ lọc (DKK)`, line `Chi tiêu` cũng chỉ tính transaction `EXPENSE` DKK
-  - Monthly overview 4 tháng gần nhất (DKK)
+  - Tổng thu/chi và xu hướng theo kỳ dùng đơn vị tiền tệ chính của tài khoản
+  - Khi đơn vị chính là DKK, tổng chi vẫn tính giao dịch đổi tiền theo logic hiện tại
+  - Line `Chi tiêu` trong biểu đồ xu hướng chỉ tính transaction `EXPENSE` của đơn vị chính
+- **Đơn vị tiền tệ chính theo tài khoản**:
+  - Chọn DKK hoặc VND trong menu tài khoản, mặc định DKK
+  - Form thêm giao dịch mặc định theo đơn vị tiền tệ chính
+  - Tổng thu/chi/còn lại và biểu đồ xu hướng trên Dashboard ưu tiên đơn vị tiền tệ chính
+  - Phân bổ chi tiêu mặc định theo đơn vị tiền tệ chính và vẫn có thể chuyển DKK/VND
 - **Lịch sử giao dịch**:
   - Filter theo loại, tiền tệ, khoảng thời gian
   - Click để xem chi tiết (note, category, payment method, provider, fee)

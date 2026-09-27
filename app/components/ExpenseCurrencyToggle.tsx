@@ -13,17 +13,18 @@ export function ExpenseCurrencyToggle({ active }: { active: "DKK" | "VND" }) {
   }
 
   return (
-    <div className="flex items-center gap-2">
+    <div className="inline-flex rounded-lg bg-slate-100 p-1" aria-label="Đơn vị hiển thị chi tiêu">
       {(["DKK", "VND"] as const).map((currency) => (
         <button
           key={currency}
           type="button"
           onClick={() => setCurrency(currency)}
-          className={`rounded-full border px-3 py-1 text-[10px] font-semibold uppercase tracking-wide ${
+          className={`min-h-8 rounded-md px-3 text-xs font-semibold uppercase transition focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary-300 ${
             active === currency
-              ? "border-transparent bg-ink text-white"
-              : "border-slate-200 text-slate-500"
+              ? "bg-white text-primary-700 shadow-soft"
+              : "text-slate-500"
           }`}
+          aria-pressed={active === currency}
         >
           {currency}
         </button>
