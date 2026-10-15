@@ -179,6 +179,99 @@ test('PostgreSQL ledger regressions (requires a disposable migrated test databas
       assert.equal(await prisma.session.count({ where: { token: 'concurrent-test-token' } }), 1);
     } finally { await new Promise(resolve => { server.close(resolve); server.closeAllConnections(); }); }
   });
+  for (const scope of ['user', 'system', 'restore']) {
+    for (const first of ['expense', 'clear']) {
+      await t.test(`${scope} admin mutation serializes with a ${first}-first cash expense`, async () => {
+        await reset(); await income(100);
+        const otherUser = await prisma.userAllowlist.findFirst({ where: { id: { not: user.id } } });
+        const dkk = await wallet.getWalletByCurrency('DKK');
+        await prisma.transaction.create({ data: {
+          userId: otherUser.id, walletId: dkk.id, currency: 'DKK', type: 'INCOME', amount: 1000
+        } });
+        const session = await prisma.session.upsert({
+          where: { token: 'clear-regression-session' }, update: {},
+          create: { token: 'clear-regression-session', userId: user.id, expiresAt: new Date(Date.now() + 60000) }
+        });
+        process.env.ADMIN_TOKEN = 'integration-test-only';
+        const { createAdminServer } = await import('../admin-server.mjs');
+        const { PrismaClient } = require('@prisma/client');
+        const observer = new PrismaClient();
+        let releaseFirst;
+        const firstCanFinish = new Promise(resolve => { releaseFirst = resolve; });
+        let signalPaused;
+        const firstPaused = new Promise(resolve => { signalPaused = resolve; });
+        function instrument(tx, model, method) {
+          return new Proxy(tx, { get(target, key) {
+            if (key !== model) return Reflect.get(target, key);
+            return new Proxy(target[model], { get(table, operation) {
+              if (operation !== method) return Reflect.get(table, operation);
+              return async (...args) => { signalPaused(); await firstCanFinish; return table[method](...args); };
+            } });
+          } });
+        }
+        const writerDb = { $transaction: (action, options) => prisma.$transaction(async tx => {
+          await tx.$executeRaw`SET LOCAL application_name = 'ledger_expense_regression'`;
+          return action(first === 'expense' ? instrument(tx, 'transaction', 'create') : tx);
+        }, options) };
+        const adminDb = {
+          userAllowlist: prisma.userAllowlist,
+          $transaction: (action, options) => prisma.$transaction(async tx => {
+            await tx.$executeRaw`SET LOCAL application_name = 'ledger_clear_regression'`;
+            return action(first === 'clear' ? instrument(tx, 'passwordResetRequest', 'deleteMany') : tx);
+          }, options)
+        };
+        const writer = createLoader({ './db': { prisma: writerDb }, '@/lib/db': { prisma: writerDb }, '@/lib/auth': { getApiSessionUser: async () => user } })('app/api/transactions/route.ts');
+        const server = createAdminServer(adminDb);
+        await new Promise(resolve => server.listen(0, '127.0.0.1', resolve));
+        const base = `http://127.0.0.1:${server.address().port}`;
+        const headers = { 'X-Admin-Token': process.env.ADMIN_TOKEN, 'Content-Type': 'application/json' };
+        const backup = scope === 'restore' ? await (await fetch(`${base}/api/system/backup`, { headers })).json() : undefined;
+        const endpoint = scope === 'user' ? `/api/users/${user.id}/clear-data` :
+          scope === 'restore' ? '/api/system/restore' : '/api/system/clear-user-data';
+        const clear = () => fetch(`${base}${endpoint}`, {
+          method: 'POST', headers, body: backup ? JSON.stringify({ backup }) : undefined
+        });
+        const expense = () => writer.POST(request({ type: 'EXPENSE', amountMajor: 80 }));
+        const pending = [];
+        let secondFinished = false;
+        let observed;
+        try {
+          pending.push(first === 'expense' ? expense() : clear());
+          await Promise.race([
+            firstPaused,
+            pending[0].then(() => { throw new Error('The first operation finished before reaching the test barrier'); })
+          ]);
+          pending.push((first === 'expense' ? clear() : expense()).finally(() => { secondFinished = true; }));
+          const secondName = first === 'expense' ? 'ledger_clear_regression' : 'ledger_expense_regression';
+          // Observe PostgreSQL's lock wait, rather than relying on a fixed sleep.
+          for (let attempt = 0; attempt < 100; attempt++) {
+            if (secondFinished) { observed = 'completed before first operation'; break; }
+            const waiting = await observer.$queryRaw`
+              SELECT pid FROM pg_stat_activity WHERE application_name = ${secondName} AND wait_event_type = 'Lock'
+            `;
+            if (waiting.length) { observed = 'blocked on lock'; break; }
+            await new Promise(resolve => setTimeout(resolve, 20));
+          }
+          releaseFirst();
+          const responses = await Promise.all(pending);
+          const expenseResponse = responses[first === 'expense' ? 0 : 1];
+          const clearResponse = responses[first === 'clear' ? 0 : 1];
+          assert.equal(clearResponse.status, 200, await clearResponse.text());
+          const balance = (await wallet.getWalletBalances(user.id)).balances.DKK;
+          assert.equal(observed, 'blocked on lock', `Final DKK balance: ${balance}`);
+          assert.equal(expenseResponse.status, first === 'expense' || scope === 'restore' ? 200 : 400);
+          assert.equal(balance, scope === 'restore' ? (first === 'expense' ? 10000 : 2000) : 0);
+          assert.equal((await wallet.getWalletBalances(otherUser.id)).balances.DKK, scope === 'system' ? 0 : 1000);
+          assert(await prisma.session.findUnique({ where: { id: session.id } }), 'Existing sessions are preserved');
+        } finally {
+          releaseFirst();
+          await Promise.allSettled(pending);
+          await observer.$disconnect();
+          await new Promise(resolve => { server.close(resolve); server.closeAllConnections(); });
+        }
+      });
+    }
+  }
   await t.test('real backup restore round-trips all records and rejects invalid JSON without deleting anything', async () => {
     process.env.ADMIN_TOKEN = 'integration-test-only';
     const { createAdminServer } = await import('../admin-server.mjs');

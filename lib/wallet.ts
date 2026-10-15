@@ -70,7 +70,7 @@ export async function getWalletByCurrency(currency: "DKK" | "VND", db: Prisma.Tr
 
 export async function withUserLedger<T>(userId: string, action: (tx: Prisma.TransactionClient) => Promise<T>) {
   return prisma.$transaction(async (tx) => {
-    // Every ledger mutation takes this lock before reading balances or records.
+    // Match the user-row lock taken by admin clear/restore transactions.
     // READ COMMITTED then sees the preceding writer's committed changes.
     await tx.$queryRaw`SELECT "id" FROM "UserAllowlist" WHERE "id" = ${userId} FOR UPDATE`;
     // Initialize shared wallets in one order, including during concurrent first use.

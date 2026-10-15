@@ -8,6 +8,7 @@ const HASH_SCHEME = "scrypt_v2";
 const ADMIN_MUTATION_LIMIT = 120;
 const ADMIN_MUTATION_WINDOW_MS = 60 * 60 * 1000;
 const ADMIN_BODY_LIMIT_BYTES = 10 * 1024 * 1024;
+const LEDGER_TRANSACTION_OPTIONS = { isolationLevel: "ReadCommitted", maxWait: 10000, timeout: 30000 };
 const BASE_SECURITY_HEADERS = {
   "Cache-Control": "no-store",
   "X-Frame-Options": "DENY",
@@ -826,6 +827,17 @@ function appHtml() {
 </html>`;
 }
 
+async function lockLedgerUsers(tx, userId) {
+  if (userId !== undefined) {
+    return tx.$queryRaw`SELECT "id" FROM "UserAllowlist" WHERE "id" = ${userId} FOR UPDATE`;
+  }
+
+  // Global mutations must also exclude registrations and ledger writers for
+  // newly created users. Take this before any wallet or ledger locks.
+  await tx.$executeRaw`LOCK TABLE "UserAllowlist" IN EXCLUSIVE MODE`;
+  return tx.$queryRaw`SELECT "id" FROM "UserAllowlist" ORDER BY "id" FOR UPDATE`;
+}
+
 async function handleAdminRequest(req, res, prisma) {
   try {
     const url = new URL(req.url ?? "/", "http://localhost");
@@ -1015,6 +1027,7 @@ async function handleAdminRequest(req, res, prisma) {
       }
 
       await prisma.$transaction(async (tx) => {
+        await lockLedgerUsers(tx);
         const walletIdMap = new Map();
         const currencyWalletMap = new Map();
         const walletRows = wallets.length > 0 ? wallets : [
@@ -1120,7 +1133,7 @@ async function handleAdminRequest(req, res, prisma) {
             }))
           });
         }
-      });
+      }, LEDGER_TRANSACTION_OPTIONS);
 
       sendJson(res, 200, {
         ok: true,
@@ -1137,6 +1150,7 @@ async function handleAdminRequest(req, res, prisma) {
 
     if (req.method === "POST" && url.pathname === "/api/system/clear-user-data") {
       const result = await prisma.$transaction(async (tx) => {
+        await lockLedgerUsers(tx);
         const passwordResetRequests = await tx.passwordResetRequest.deleteMany({});
         const exchanges = await tx.exchange.deleteMany({});
         const transactions = await tx.transaction.deleteMany({});
@@ -1146,7 +1160,7 @@ async function handleAdminRequest(req, res, prisma) {
           exchangeCount: exchanges.count,
           transactionCount: transactions.count
         };
-      });
+      }, LEDGER_TRANSACTION_OPTIONS);
 
       sendJson(res, 200, {
         ok: true,
@@ -1241,6 +1255,7 @@ async function handleAdminRequest(req, res, prisma) {
       }
 
       const result = await prisma.$transaction(async (tx) => {
+        await lockLedgerUsers(tx, id);
         const passwordResetRequests = await tx.passwordResetRequest.deleteMany({ where: { userId: id } });
         const exchanges = await tx.exchange.deleteMany({ where: { userId: id } });
         const transactions = await tx.transaction.deleteMany({ where: { userId: id } });
@@ -1250,7 +1265,7 @@ async function handleAdminRequest(req, res, prisma) {
           exchangeCount: exchanges.count,
           transactionCount: transactions.count
         };
-      });
+      }, LEDGER_TRANSACTION_OPTIONS);
 
       sendJson(res, 200, {
         ok: true,
