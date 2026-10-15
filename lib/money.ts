@@ -29,6 +29,15 @@ export function toMinor(amountMajor: number, currency: "DKK" | "VND") {
   return Math.round(amountMajor * divisor);
 }
 
+// PostgreSQL Int columns store signed 32-bit minor-unit amounts.
+export function isValidMinorAmount(amount: number, allowZero = false) {
+  return Number.isSafeInteger(amount) && amount >= (allowZero ? 0 : 1) && amount <= 2147483647;
+}
+
+export function formatMajorAmountForInput(amount: number) {
+  return formatAmountForInput(String(amount).replace(".", ","));
+}
+
 export function normalizeAmountForApi(input: string) {
   const cleaned = input.trim().replace(/\s+/g, "").replace(/\./g, "");
   if (!cleaned) return "";

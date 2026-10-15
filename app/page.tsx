@@ -8,7 +8,7 @@ import { TimeFilterTabs } from "./components/TimeFilterTabs";
 import { unstable_noStore as noStore } from "next/cache";
 import { requireActivePageSession } from "@/lib/server-auth";
 import { cookies } from "next/headers";
-import { isCreditCardRepayment } from "@/lib/credit";
+import { isCreditCardRepayment, nonRepaymentExpenseFilter } from "@/lib/credit";
 import {
   ChartIcon,
   ChevronRightIcon,
@@ -426,18 +426,6 @@ export default async function Dashboard({
     })
     .join(" ");
 
-  const creditRepaymentFilter = {
-    AND: [
-      {
-        OR: [
-          { category: { equals: "Tín dụng", mode: "insensitive" as const } },
-          { category: { equals: "Tin dung", mode: "insensitive" as const } }
-        ]
-      },
-      { paymentMethod: { not: "CREDIT_CARD" as const } }
-    ]
-  };
-
   const [expenseByCategory, uncategorized] = await Promise.all([
     prisma.transaction.groupBy({
       by: ["category"],
@@ -446,7 +434,7 @@ export default async function Dashboard({
         userId: user.id,
         type: "EXPENSE",
         currency: expenseCurrency,
-        NOT: creditRepaymentFilter,
+        ...nonRepaymentExpenseFilter,
         AND: [{ category: { not: null } }, { category: { not: "" } }],
         createdAt: { gte: start, lte: end }
       },
@@ -460,8 +448,7 @@ export default async function Dashboard({
         userId: user.id,
         type: "EXPENSE",
         currency: expenseCurrency,
-        NOT: creditRepaymentFilter,
-        OR: [{ category: null }, { category: "" }],
+        AND: [nonRepaymentExpenseFilter, { OR: [{ category: null }, { category: "" }] }],
         createdAt: { gte: start, lte: end }
       }
     })

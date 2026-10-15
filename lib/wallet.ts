@@ -1,35 +1,17 @@
 import { prisma } from "./db";
 import { expenseAffectsWallet } from "./credit";
+import { Prisma } from "@prisma/client";
 
-export async function ensureWallets() {
-  const existing = await prisma.wallet.findMany();
-  const byCurrency = new Map(existing.map((wallet) => [wallet.currency, wallet]));
-
-  if (!byCurrency.get("DKK")) {
-    await prisma.wallet.create({
-      data: {
-        name: "DKK Wallet",
-        currency: "DKK"
-      }
-    });
-  }
-
-  if (!byCurrency.get("VND")) {
-    await prisma.wallet.create({
-      data: {
-        name: "VND Wallet",
-        currency: "VND"
-      }
-    });
-  }
-
-  return prisma.wallet.findMany();
+export async function ensureWallets(db: Prisma.TransactionClient = prisma) {
+  return Promise.all((["DKK", "VND"] as const).map((currency) =>
+    getWalletByCurrency(currency, db)
+  ));
 }
 
-export async function getWalletBalances(userId: string) {
-  const wallets = await ensureWallets();
+export async function getWalletBalances(userId: string, db: Prisma.TransactionClient = prisma) {
+  const wallets = await ensureWallets(db);
   const [transactionSums, exchangeSums, exchangeFeeDkk, exchangeFeeVnd] = await Promise.all([
-    prisma.transaction.groupBy({
+    db.transaction.groupBy({
       by: ["currency", "type", "paymentMethod"],
       where: {
         userId,
@@ -37,18 +19,18 @@ export async function getWalletBalances(userId: string) {
       },
       _sum: { amount: true }
     }),
-    prisma.exchange.aggregate({
+    db.exchange.aggregate({
       where: { userId },
       _sum: {
         fromAmountDkk: true,
         toAmountVnd: true
       }
     }),
-    prisma.exchange.aggregate({
+    db.exchange.aggregate({
       where: { userId, feeCurrency: "DKK" },
       _sum: { feeAmount: true }
     }),
-    prisma.exchange.aggregate({
+    db.exchange.aggregate({
       where: { userId, feeCurrency: "VND" },
       _sum: { feeAmount: true }
     })
@@ -76,11 +58,24 @@ export async function getWalletBalances(userId: string) {
   };
 }
 
-export async function getWalletByCurrency(currency: "DKK" | "VND") {
-  const wallet = await prisma.wallet.findFirst({ where: { currency } });
-  if (!wallet) {
-    await ensureWallets();
-    return prisma.wallet.findFirst({ where: { currency } });
-  }
-  return wallet;
+export async function getWalletByCurrency(currency: "DKK" | "VND", db: Prisma.TransactionClient = prisma) {
+  const existing = await db.wallet.findUnique({ where: { currency } });
+  if (existing) return existing;
+  return db.wallet.upsert({
+    where: { currency },
+    update: { currency },
+    create: { name: `${currency} Wallet`, currency }
+  });
+}
+
+export async function withUserLedger<T>(userId: string, action: (tx: Prisma.TransactionClient) => Promise<T>) {
+  return prisma.$transaction(async (tx) => {
+    // Every ledger mutation takes this lock before reading balances or records.
+    // READ COMMITTED then sees the preceding writer's committed changes.
+    await tx.$queryRaw`SELECT "id" FROM "UserAllowlist" WHERE "id" = ${userId} FOR UPDATE`;
+    // Initialize shared wallets in one order, including during concurrent first use.
+    await getWalletByCurrency("DKK", tx);
+    await getWalletByCurrency("VND", tx);
+    return action(tx);
+  }, { isolationLevel: Prisma.TransactionIsolationLevel.ReadCommitted, maxWait: 10000, timeout: 15000 });
 }

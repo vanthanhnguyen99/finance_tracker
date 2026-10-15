@@ -8,7 +8,7 @@
 
 - **Thu nhập**: hỗ trợ DKK/VND, có danh mục và ghi chú.
 - **Chi tiêu**: hỗ trợ DKK/VND, danh mục cố định, ghi chú, phương thức thanh toán (mặc định tiền mặt, tùy chọn thẻ tín dụng).
-- **Đổi tiền (DKK → VND)**: nhập số DKK đổi, số VND nhận, phí (DKK), hệ thống tự tính tỷ giá.
+- **Đổi tiền (DKK → VND)**: nhập số DKK đổi, số VND nhận, phí (DKK/VND), hệ thống tự tính tỷ giá.
 - **Dashboard**:
   - Filter thời gian: Hôm nay / Tuần này / Tháng này / 7 ngày / 30 ngày
   - Hỗ trợ thêm khoảng ngày tùy chỉnh (`from`/`to`)
@@ -28,7 +28,7 @@
   - Filter theo loại, tiền tệ, khoảng thời gian
   - Click để xem chi tiết (note, category, payment method, provider, fee)
   - Sửa / xóa giao dịch
-  - Sửa Exchange: DKK đổi, VND nhận, phí (DKK)
+  - Sửa Exchange: DKK đổi, VND nhận, phí và đơn vị phí (DKK/VND)
 - **Đăng xuất**:
   - Có nút `Đăng xuất` rõ ràng ở các màn chính (Tổng quan / Thêm / Lịch sử)
 - **Quên mật khẩu (cần admin duyệt)**:
@@ -113,7 +113,7 @@
   - Nếu `paymentMethod = CREDIT_CARD`: ghi nhận chi tiêu thực tế nhưng **không trừ ví ngay**.
   - Giao dịch trả thẻ (danh mục `Tín dụng`, không phải `CREDIT_CARD`) chỉ dùng để giảm ví, **không cộng thêm vào thống kê chi tiêu** để tránh double count.
 - **Exchange**: trừ DKK, cộng VND, lưu tỷ giá.
-- **Fee**: hiện tại xử lý phí theo DKK (khi edit exchange).
+- **Fee**: hỗ trợ DKK/VND; khi sửa exchange, giữ nguyên phí và đơn vị phí nếu không thay đổi.
 
 ---
 
@@ -458,3 +458,14 @@ cat backup.sql | docker compose exec -T db psql -U "$POSTGRES_USER" "$POSTGRES_D
   - `sessions`
   - `wallets`
 - API trả về số bản ghi đã xóa theo từng bảng để admin kiểm tra sau thao tác.
+
+## Regression checks and deployment notes
+
+- Run `npm test` for amount formatting, restore validation, and authentication rate-limit regressions.
+- Run `TEST_DATABASE_URL=postgresql://...@127.0.0.1:<port>/finance_tracker_test npm run test:integration` against a **disposable** PostgreSQL database after running `DATABASE_URL=<test-url> npx prisma migrate deploy`. Integration checks clear this test database and exercise concurrent ledger writes and backup/restore.
+- `npm run build` regenerates the Prisma client and checks the production build.
+- Migration `20260213000000_restore_auth_baseline` recreates the missing authentication bootstrap for fresh installs. It is safe to apply to existing installations and does not change previously committed migration files. Run `npx prisma migrate deploy` before starting the updated app.
+- The admin service is bound to `127.0.0.1:6070`; remote administration can use an SSH tunnel.
+- Forwarded client IPs are ignored by default. Set `TRUST_PROXY=true` only when a trusted proxy is the sole ingress and overwrites `X-Forwarded-For`. Login and reset requests also have per-account limits; without proxy trust, client limits are shared.
+- Ledger writes lock the user's database row so balance validation and the resulting write execute together. Backups use a repeatable-read snapshot; restores require the complete version-1 system backup format.
+- Exchange edits preserve both the fee amount and its currency. Fees can be edited in DKK or VND.

@@ -26,7 +26,9 @@ export async function POST(req: NextRequest) {
   }
 
   const ip = getClientIp(req.headers.get("x-forwarded-for"), "unknown");
-  const rate = checkRateLimit(`forgot-password:${ip}:${email}`, 6, 15 * 60 * 1000);
+  const accountRate = checkRateLimit(`forgot-password-account:${email}`, 6, 15 * 60 * 1000);
+  const clientRate = checkRateLimit(`forgot-password-client:${ip}`, 30, 15 * 60 * 1000);
+  const rate = accountRate.allowed ? clientRate : accountRate;
   if (!rate.allowed) {
     return NextResponse.json(
       { error: "Quá nhiều yêu cầu, vui lòng thử lại sau." },

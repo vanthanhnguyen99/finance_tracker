@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { prisma } from "@/lib/db";
-import { getWalletByCurrency, getWalletBalances } from "@/lib/wallet";
-import { toMinor } from "@/lib/money";
+import { getWalletByCurrency, getWalletBalances, withUserLedger } from "@/lib/wallet";
+import { toMinor, isValidMinorAmount } from "@/lib/money";
 import { getApiSessionUser } from "@/lib/auth";
 import { getTimeZoneFromRequest, parseDateInputInTimeZone } from "@/lib/timezone";
 import { expenseAffectsWallet, normalizePaymentMethod } from "@/lib/credit";
@@ -105,33 +105,38 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: "Invalid createdAt" }, { status: 400 });
   }
 
-  const wallet = await getWalletByCurrency(currency);
-  if (!wallet) {
-    return NextResponse.json({ error: "Wallet not found" }, { status: 400 });
-  }
-
   const amountMinor = toMinor(amountMajor, currency);
-
-  if (type === "EXPENSE" && expenseAffectsWallet(resolvedExpensePaymentMethod)) {
-    const { balances } = await getWalletBalances(user.id);
-    if (balances[currency] < amountMinor) {
-      return NextResponse.json({ error: "Insufficient balance" }, { status: 400 });
-    }
+  if (!isValidMinorAmount(amountMinor)) {
+    return NextResponse.json({ error: "Amount is outside the supported range" }, { status: 400 });
   }
 
-  const transaction = await prisma.transaction.create({
-    data: {
-      type,
-      userId: user.id,
-      walletId: wallet.id,
-      amount: amountMinor,
-      currency,
-      ...(type === "EXPENSE" ? { paymentMethod: resolvedExpensePaymentMethod } : {}),
-      category,
-      note,
-      ...(createdAt ? { createdAt } : {})
+  return withUserLedger(user.id, async (tx) => {
+    const wallet = await getWalletByCurrency(currency, tx);
+    if (!wallet) {
+      return NextResponse.json({ error: "Wallet not found" }, { status: 400 });
     }
-  });
 
-  return NextResponse.json({ transaction });
+    if (type === "EXPENSE" && expenseAffectsWallet(resolvedExpensePaymentMethod)) {
+      const { balances } = await getWalletBalances(user.id, tx);
+      if (balances[currency] < amountMinor) {
+        return NextResponse.json({ error: "Insufficient balance" }, { status: 400 });
+      }
+    }
+
+    const transaction = await tx.transaction.create({
+      data: {
+        type,
+        userId: user.id,
+        walletId: wallet.id,
+        amount: amountMinor,
+        currency,
+        ...(type === "EXPENSE" ? { paymentMethod: resolvedExpensePaymentMethod } : {}),
+        category,
+        note,
+        ...(createdAt ? { createdAt } : {})
+      }
+    });
+
+    return NextResponse.json({ transaction });
+  });
 }

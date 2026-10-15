@@ -1,6 +1,19 @@
-import type { PaymentMethod } from "@prisma/client";
+import type { PaymentMethod, Prisma } from "@prisma/client";
 
 const CREDIT_CARD_REPAYMENT_CATEGORY = "tin dung";
+
+// Explicit NULL branches avoid SQL three-valued logic dropping uncategorized
+// expenses and treat legacy NULL payment methods as cash.
+export const nonRepaymentExpenseFilter: Prisma.TransactionWhereInput = {
+  OR: [
+    { category: null },
+    { NOT: { OR: [
+      { category: { equals: "Tín dụng", mode: "insensitive" } },
+      { category: { equals: "Tin dung", mode: "insensitive" } }
+    ] } },
+    { paymentMethod: "CREDIT_CARD" }
+  ]
+};
 
 function normalizeCategory(value: string | null | undefined) {
   if (!value) return "";
