@@ -1,14 +1,14 @@
 import crypto from "node:crypto";
 import http from "node:http";
-import { URL } from "node:url";
+import { URL, pathToFileURL } from "node:url";
 import { PrismaClient } from "@prisma/client";
 
-const prisma = new PrismaClient();
 const port = Number(process.env.ADMIN_PORT ?? 3000);
 const HASH_SCHEME = "scrypt_v2";
 const ADMIN_MUTATION_LIMIT = 120;
 const ADMIN_MUTATION_WINDOW_MS = 60 * 60 * 1000;
 const ADMIN_BODY_LIMIT_BYTES = 10 * 1024 * 1024;
+const LEDGER_TRANSACTION_OPTIONS = { isolationLevel: "ReadCommitted", maxWait: 10000, timeout: 30000 };
 const BASE_SECURITY_HEADERS = {
   "Cache-Control": "no-store",
   "X-Frame-Options": "DENY",
@@ -155,6 +155,24 @@ function parsePositiveNumber(value, fieldName) {
     throw new Error(`${fieldName} must be greater than 0`);
   }
   return num;
+}
+
+function validateSystemBackup(backup) {
+  if (!backup || Array.isArray(backup) || backup.version !== 1 ||
+      backup.scope !== "system" || backup.source !== "finance-tracker-admin") {
+    throw new Error("Invalid system backup format or version");
+  }
+  parseIsoDate(backup.exportedAt, "exportedAt");
+  const collections = {
+    wallets: "walletCount", users: "userCount", sessions: "sessionCount",
+    passwordResetRequests: "passwordResetRequestCount", transactions: "transactionCount", exchanges: "exchangeCount"
+  };
+  for (const [key, countKey] of Object.entries(collections)) {
+    if (!Array.isArray(backup[key])) throw new Error(`backup.${key} must be an array`);
+    if (backup.meta && backup.meta[countKey] !== backup[key].length) {
+      throw new Error(`backup.${key} count does not match metadata`);
+    }
+  }
 }
 
 function normalizeUsers(records) {
@@ -809,7 +827,18 @@ function appHtml() {
 </html>`;
 }
 
-const server = http.createServer(async (req, res) => {
+async function lockLedgerUsers(tx, userId) {
+  if (userId !== undefined) {
+    return tx.$queryRaw`SELECT "id" FROM "UserAllowlist" WHERE "id" = ${userId} FOR UPDATE`;
+  }
+
+  // Global mutations must also exclude registrations and ledger writers for
+  // newly created users. Take this before any wallet or ledger locks.
+  await tx.$executeRaw`LOCK TABLE "UserAllowlist" IN EXCLUSIVE MODE`;
+  return tx.$queryRaw`SELECT "id" FROM "UserAllowlist" ORDER BY "id" FOR UPDATE`;
+}
+
+async function handleAdminRequest(req, res, prisma) {
   try {
     const url = new URL(req.url ?? "/", "http://localhost");
 
@@ -866,14 +895,17 @@ const server = http.createServer(async (req, res) => {
     }
 
     if (req.method === "GET" && url.pathname === "/api/system/backup") {
-      const [wallets, users, sessions, passwordResetRequests, transactions, exchanges] = await Promise.all([
-        prisma.wallet.findMany({ orderBy: { currency: "asc" } }),
-        prisma.userAllowlist.findMany({ orderBy: { createdAt: "asc" } }),
-        prisma.session.findMany({ orderBy: { createdAt: "asc" } }),
-        prisma.passwordResetRequest.findMany({ orderBy: { createdAt: "asc" } }),
-        prisma.transaction.findMany({ orderBy: { createdAt: "asc" } }),
-        prisma.exchange.findMany({ orderBy: { createdAt: "asc" } })
-      ]);
+      const [wallets, users, sessions, passwordResetRequests, transactions, exchanges] = await prisma.$transaction(
+        (tx) => Promise.all([
+          tx.wallet.findMany({ orderBy: { currency: "asc" } }),
+          tx.userAllowlist.findMany({ orderBy: { createdAt: "asc" } }),
+          tx.session.findMany({ orderBy: { createdAt: "asc" } }),
+          tx.passwordResetRequest.findMany({ orderBy: { createdAt: "asc" } }),
+          tx.transaction.findMany({ orderBy: { createdAt: "asc" } }),
+          tx.exchange.findMany({ orderBy: { createdAt: "asc" } })
+        ]),
+        { isolationLevel: "RepeatableRead", timeout: 30000 }
+      );
 
       sendJson(res, 200, {
         version: 1,
@@ -952,19 +984,21 @@ const server = http.createServer(async (req, res) => {
 
     if (req.method === "POST" && url.pathname === "/api/system/restore") {
       const body = await parseBody(req);
-      if (!body || typeof body !== "object") {
-        sendJson(res, 400, { error: "Invalid request body" });
+      const mode = body?.mode === "append" ? "append" : "replace";
+      const backupPayload = body?.backup ?? body;
+      let wallets, users, sessions, passwordResetRequests, transactions, exchanges;
+      try {
+        validateSystemBackup(backupPayload);
+        wallets = normalizeWallets(backupPayload.wallets);
+        users = normalizeUsers(backupPayload.users);
+        sessions = normalizeSessions(backupPayload.sessions);
+        passwordResetRequests = normalizePasswordResetRequests(backupPayload.passwordResetRequests);
+        transactions = normalizeSystemTransactions(backupPayload.transactions);
+        exchanges = normalizeSystemExchanges(backupPayload.exchanges);
+      } catch (error) {
+        sendJson(res, 400, { error: error.message });
         return;
       }
-
-      const mode = body.mode === "append" ? "append" : "replace";
-      const backupPayload = body.backup && typeof body.backup === "object" ? body.backup : body;
-      const wallets = normalizeWallets(backupPayload.wallets);
-      const users = normalizeUsers(backupPayload.users);
-      const sessions = normalizeSessions(backupPayload.sessions);
-      const passwordResetRequests = normalizePasswordResetRequests(backupPayload.passwordResetRequests);
-      const transactions = normalizeSystemTransactions(backupPayload.transactions);
-      const exchanges = normalizeSystemExchanges(backupPayload.exchanges);
       const userIds = new Set(users.map((row) => row.id));
 
       for (const row of sessions) {
@@ -993,6 +1027,7 @@ const server = http.createServer(async (req, res) => {
       }
 
       await prisma.$transaction(async (tx) => {
+        await lockLedgerUsers(tx);
         const walletIdMap = new Map();
         const currencyWalletMap = new Map();
         const walletRows = wallets.length > 0 ? wallets : [
@@ -1098,7 +1133,7 @@ const server = http.createServer(async (req, res) => {
             }))
           });
         }
-      });
+      }, LEDGER_TRANSACTION_OPTIONS);
 
       sendJson(res, 200, {
         ok: true,
@@ -1115,6 +1150,7 @@ const server = http.createServer(async (req, res) => {
 
     if (req.method === "POST" && url.pathname === "/api/system/clear-user-data") {
       const result = await prisma.$transaction(async (tx) => {
+        await lockLedgerUsers(tx);
         const passwordResetRequests = await tx.passwordResetRequest.deleteMany({});
         const exchanges = await tx.exchange.deleteMany({});
         const transactions = await tx.transaction.deleteMany({});
@@ -1124,7 +1160,7 @@ const server = http.createServer(async (req, res) => {
           exchangeCount: exchanges.count,
           transactionCount: transactions.count
         };
-      });
+      }, LEDGER_TRANSACTION_OPTIONS);
 
       sendJson(res, 200, {
         ok: true,
@@ -1219,6 +1255,7 @@ const server = http.createServer(async (req, res) => {
       }
 
       const result = await prisma.$transaction(async (tx) => {
+        await lockLedgerUsers(tx, id);
         const passwordResetRequests = await tx.passwordResetRequest.deleteMany({ where: { userId: id } });
         const exchanges = await tx.exchange.deleteMany({ where: { userId: id } });
         const transactions = await tx.transaction.deleteMany({ where: { userId: id } });
@@ -1228,7 +1265,7 @@ const server = http.createServer(async (req, res) => {
           exchangeCount: exchanges.count,
           transactionCount: transactions.count
         };
-      });
+      }, LEDGER_TRANSACTION_OPTIONS);
 
       sendJson(res, 200, {
         ok: true,
@@ -1307,8 +1344,14 @@ const server = http.createServer(async (req, res) => {
     const message = error instanceof Error ? error.message : "Unknown error";
     sendJson(res, 500, { error: message });
   }
-});
+}
 
-server.listen(port, "0.0.0.0", () => {
-  console.log(`Admin app listening on :${port}`);
-});
+export function createAdminServer(prisma = new PrismaClient()) {
+  return http.createServer((req, res) => handleAdminRequest(req, res, prisma));
+}
+
+if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
+  createAdminServer().listen(port, "0.0.0.0", () => {
+    console.log(`Admin app listening on :${port}`);
+  });
+}

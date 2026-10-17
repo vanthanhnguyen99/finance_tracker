@@ -8,6 +8,7 @@ const globalForRateLimit = globalThis as unknown as {
 };
 
 const store = globalForRateLimit.rateLimitStore ?? new Map<string, Bucket>();
+const MAX_BUCKETS = 10000;
 
 if (!globalForRateLimit.rateLimitStore) {
   globalForRateLimit.rateLimitStore = store;
@@ -18,6 +19,15 @@ export function checkRateLimit(key: string, limit: number, windowMs: number) {
   const current = store.get(key);
 
   if (!current || now > current.resetAt) {
+    if (store.size >= MAX_BUCKETS) {
+      for (const [storedKey, bucket] of store) {
+        if (now > bucket.resetAt) store.delete(storedKey);
+      }
+      // Fail closed instead of evicting active limits under a flood of new keys.
+      if (!store.has(key) && store.size >= MAX_BUCKETS) {
+        return { allowed: false, remaining: 0, retryAfterSeconds: 60 };
+      }
+    }
     store.set(key, { count: 1, resetAt: now + windowMs });
     return {
       allowed: true,
@@ -44,6 +54,9 @@ export function checkRateLimit(key: string, limit: number, windowMs: number) {
 }
 
 export function getClientIp(rawForwardedFor: string | null, fallback: string) {
+  // NextRequest does not expose the socket peer. Trust forwarding headers only
+  // when deployment explicitly restricts ingress to a proxy that overwrites them.
+  if (process.env.TRUST_PROXY !== "true") return fallback;
   const first = rawForwardedFor?.split(",")[0]?.trim();
   return first && first.length > 0 ? first : fallback;
 }

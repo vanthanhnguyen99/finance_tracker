@@ -40,7 +40,7 @@ services:
       ADMIN_PORT: 3000
     command: ["node", "admin-server.mjs"]
     ports:
-      - "6070:3000"
+      - "127.0.0.1:6070:3000"
     networks:
       - internal
 

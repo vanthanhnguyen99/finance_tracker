@@ -16,7 +16,9 @@ export async function POST(req: NextRequest) {
   }
 
   const ip = getClientIp(req.headers.get("x-forwarded-for"), "unknown");
-  const rate = checkRateLimit(`login:${ip}:${email}`, 8, 10 * 60 * 1000);
+  const accountRate = checkRateLimit(`login-account:${email}`, 8, 10 * 60 * 1000);
+  const clientRate = checkRateLimit(`login-client:${ip}`, 40, 10 * 60 * 1000);
+  const rate = accountRate.allowed ? clientRate : accountRate;
   if (!rate.allowed) {
     return NextResponse.json(
       { error: "Đăng nhập thất bại quá nhiều lần, vui lòng thử lại sau." },

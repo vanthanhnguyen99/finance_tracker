@@ -109,7 +109,8 @@ export default async function History({
           : null,
         fromAmountDkk: exchange.fromAmountDkk / 100,
         toAmountVnd: exchange.toAmountVnd,
-        feeAmountDkk: exchange.feeCurrency === "DKK" && exchange.feeAmount ? exchange.feeAmount / 100 : 0
+        feeAmount: exchange.feeAmount ? exchange.feeAmount / (exchange.feeCurrency === "VND" ? 1 : 100) : 0,
+        feeCurrency: exchange.feeCurrency
       }))
     : [];
 

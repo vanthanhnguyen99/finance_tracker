@@ -3,7 +3,7 @@
 import Link from "next/link";
 import { useState } from "react";
 import { useRouter } from "next/navigation";
-import { formatAmountForInput, normalizeAmountForApi } from "@/lib/money";
+import { formatAmountForInput, formatMajorAmountForInput, normalizeAmountForApi } from "@/lib/money";
 import { ChevronDownIcon, ExchangeIcon, ExpenseIcon, IncomeIcon, PlusIcon } from "./AppIcons";
 
 export type HistoryItem =
@@ -29,7 +29,8 @@ export type HistoryItem =
       fee?: string | null;
       fromAmountDkk?: number;
       toAmountVnd?: number;
-      feeAmountDkk?: number;
+      feeAmount?: number;
+      feeCurrency?: "DKK" | "VND" | null;
     };
 
 function formatDate(date: string, timeZone: string) {
@@ -173,7 +174,8 @@ export function HistoryList({ items, timeZone }: { items: HistoryItem[]; timeZon
       body: JSON.stringify({
         fromAmountDkk,
         toAmountVnd,
-        feeAmount: feeAmount || undefined
+        feeAmount: feeAmount || "0",
+        feeCurrency: data.get("feeCurrency")
       })
     });
     setSaving(false);
@@ -293,7 +295,7 @@ export function HistoryList({ items, timeZone }: { items: HistoryItem[]; timeZon
                                       name="fromAmountDkk"
                                       type="text"
                                       inputMode="decimal"
-                                      defaultValue={formatAmountForInput(String(item.fromAmountDkk ?? 0))}
+                                      defaultValue={formatMajorAmountForInput(item.fromAmountDkk ?? 0)}
                                       required
                                       onInput={handleAmountInput}
                                       onFocus={handleAmountFocus}
@@ -306,23 +308,30 @@ export function HistoryList({ items, timeZone }: { items: HistoryItem[]; timeZon
                                       name="toAmountVnd"
                                       type="text"
                                       inputMode="decimal"
-                                      defaultValue={formatAmountForInput(String(item.toAmountVnd ?? 0))}
+                                      defaultValue={formatMajorAmountForInput(item.toAmountVnd ?? 0)}
                                       required
                                       onInput={handleAmountInput}
                                       onFocus={handleAmountFocus}
                                     />
                                   </label>
                                   <label className="form-label">
-                                    Phí (DKK)
+                                    Phí
                                     <input
                                       className="input"
                                       name="feeAmount"
                                       type="text"
                                       inputMode="decimal"
-                                      defaultValue={formatAmountForInput(String(item.feeAmountDkk ?? 0))}
+                                      defaultValue={formatMajorAmountForInput(item.feeAmount ?? 0)}
                                       onInput={handleAmountInput}
                                       onFocus={handleAmountFocus}
                                     />
+                                  </label>
+                                  <label className="form-label">
+                                    Đơn vị phí
+                                    <select className="select" name="feeCurrency" defaultValue={item.feeCurrency ?? "DKK"}>
+                                      <option value="DKK">DKK</option>
+                                      <option value="VND">VND</option>
+                                    </select>
                                   </label>
                                 </>
                               ) : (
@@ -334,7 +343,7 @@ export function HistoryList({ items, timeZone }: { items: HistoryItem[]; timeZon
                                       name="amount"
                                       type="text"
                                       inputMode="decimal"
-                                      defaultValue={formatAmountForInput(String(item.amountMajor))}
+                                      defaultValue={formatMajorAmountForInput(item.amountMajor)}
                                       required
                                       onInput={handleAmountInput}
                                       onFocus={handleAmountFocus}

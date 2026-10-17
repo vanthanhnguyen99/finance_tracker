@@ -1,8 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
-import { prisma } from "@/lib/db";
 import { Prisma } from "@prisma/client";
-import { toMinor } from "@/lib/money";
-import { getWalletBalances } from "@/lib/wallet";
+import { toMinor, isValidMinorAmount } from "@/lib/money";
+import { getWalletBalances, withUserLedger } from "@/lib/wallet";
 import { getApiSessionUser } from "@/lib/auth";
 import { revalidatePath } from "next/cache";
 
@@ -20,7 +19,11 @@ export async function PATCH(
   const body = await req.json();
   const fromAmountMajor = Number(body.fromAmountDkk);
   const toAmountVnd = Number(body.toAmountVnd);
+  const hasFeeAmount = body.feeAmount !== undefined;
   const feeAmountMajor = body.feeAmount ? Number(body.feeAmount) : 0;
+  if (body.feeCurrency !== undefined && body.feeCurrency !== "DKK" && body.feeCurrency !== "VND") {
+    return NextResponse.json({ error: "Invalid fee currency" }, { status: 400 });
+  }
 
   if (
     !Number.isFinite(fromAmountMajor) ||
@@ -37,40 +40,57 @@ export async function PATCH(
 
   const { id } = await params;
 
-  const exchange = await prisma.exchange.findFirst({
-    where: { id, userId: user.id }
-  });
-  if (!exchange) {
-    return NextResponse.json({ error: "Exchange not found" }, { status: 404 });
-  }
-
-  const fromAmountDkk = toMinor(fromAmountMajor, "DKK");
-  const toAmountVndMinor = toMinor(toAmountVnd, "VND");
-  const feeAmountMinor = feeAmountMajor ? toMinor(feeAmountMajor, "DKK") : 0;
-
-  const { balances } = await getWalletBalances(user.id);
-  const availableDkk = balances.DKK + exchange.fromAmountDkk + (exchange.feeCurrency === "DKK" ? (exchange.feeAmount ?? 0) : 0);
-  const requiredDkk = fromAmountDkk + feeAmountMinor;
-  if (availableDkk < requiredDkk) {
-    return NextResponse.json({ error: "Insufficient DKK balance" }, { status: 400 });
-  }
-
-  const effectiveRate = new Prisma.Decimal(toAmountVnd / fromAmountMajor);
-
-  const updated = await prisma.exchange.update({
-    where: { id: exchange.id },
-    data: {
-      fromAmountDkk,
-      toAmountVnd: toAmountVndMinor,
-      feeAmount: feeAmountMinor || null,
-      feeCurrency: feeAmountMinor ? "DKK" : null,
-      effectiveRate
+  const response = await withUserLedger(user.id, async (tx) => {
+    const exchange = await tx.exchange.findFirst({
+      where: { id, userId: user.id }
+    });
+    if (!exchange) {
+      return NextResponse.json({ error: "Exchange not found" }, { status: 404 });
     }
-  });
-  revalidatePath("/");
-  revalidatePath("/history");
 
-  return NextResponse.json({ exchange: updated });
+    const fromAmountDkk = toMinor(fromAmountMajor, "DKK");
+    const toAmountVndMinor = toMinor(toAmountVnd, "VND");
+    const feeCurrency = body.feeCurrency ?? exchange.feeCurrency ?? "DKK";
+    const previousFeeMajor = (exchange.feeAmount ?? 0) / (exchange.feeCurrency === "VND" ? 1 : 100);
+    const feeMajor = hasFeeAmount ? feeAmountMajor : previousFeeMajor;
+    const feeAmountMinor = toMinor(feeMajor, feeCurrency);
+    if (!isValidMinorAmount(fromAmountDkk) || !isValidMinorAmount(toAmountVndMinor) ||
+      !isValidMinorAmount(feeAmountMinor, feeMajor === 0)) {
+      return NextResponse.json({ error: "Amount is outside the supported range" }, { status: 400 });
+    }
+
+    const { balances } = await getWalletBalances(user.id, tx);
+    const availableDkk = balances.DKK + exchange.fromAmountDkk + (exchange.feeCurrency === "DKK" ? (exchange.feeAmount ?? 0) : 0);
+    const requiredDkk = fromAmountDkk + (feeCurrency === "DKK" ? feeAmountMinor : 0);
+    if (availableDkk < requiredDkk) {
+      return NextResponse.json({ error: "Insufficient DKK balance" }, { status: 400 });
+    }
+
+    const availableVnd = balances.VND - exchange.toAmountVnd +
+      (exchange.feeCurrency === "VND" ? exchange.feeAmount ?? 0 : 0);
+    if (availableVnd + toAmountVndMinor - (feeCurrency === "VND" ? feeAmountMinor : 0) < 0) {
+      return NextResponse.json({ error: "Insufficient VND balance" }, { status: 400 });
+    }
+
+    const effectiveRate = new Prisma.Decimal(toAmountVnd / fromAmountMajor);
+
+    const updated = await tx.exchange.update({
+      where: { id: exchange.id },
+      data: {
+        fromAmountDkk,
+        toAmountVnd: toAmountVndMinor,
+        feeAmount: feeAmountMinor || null,
+        feeCurrency: feeAmountMinor ? feeCurrency : null,
+        effectiveRate
+      }
+    });
+    return NextResponse.json({ exchange: updated });
+  });
+  if (response.ok) {
+    revalidatePath("/");
+    revalidatePath("/history");
+  }
+  return response;
 }
 
 export async function DELETE(
@@ -84,9 +104,9 @@ export async function DELETE(
 
   const { id } = await params;
 
-  const deleted = await prisma.exchange.deleteMany({
+  const deleted = await withUserLedger(user.id, (tx) => tx.exchange.deleteMany({
     where: { id, userId: user.id }
-  });
+  }));
   if (!deleted.count) {
     return NextResponse.json({ error: "Exchange not found" }, { status: 404 });
   }

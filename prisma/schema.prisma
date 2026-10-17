@@ -52,7 +52,7 @@ model Wallet {
 
 model Transaction {
   id        String          @id @default(uuid())
-  user      UserAllowlist?  @relation(fields: [userId], references: [id])
+  user      UserAllowlist?  @relation(fields: [userId], references: [id], onDelete: Restrict)
   userId    String?
   type      TransactionType
   wallet    Wallet          @relation(fields: [walletId], references: [id])
@@ -70,7 +70,7 @@ model Transaction {
 
 model Exchange {
   id            String   @id @default(uuid())
-  user          UserAllowlist? @relation(fields: [userId], references: [id])
+  user          UserAllowlist? @relation(fields: [userId], references: [id], onDelete: Restrict)
   userId        String?
   fromWallet    Wallet   @relation("ExchangeFrom", fields: [fromWalletId], references: [id])
   fromWalletId  String
