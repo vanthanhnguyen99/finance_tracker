@@ -654,9 +654,7 @@ function appHtml() {
     }
 
     function openSystemRestorePicker() {
-      document.querySelectorAll('[data-action]').forEach(button => button.addEventListener('click', () => window[button.dataset.action]()));
-    document.querySelectorAll('[data-filter]').forEach(input => input.addEventListener(input.dataset.filter, onFilterChange));
-    document.getElementById('systemRestoreFile')?.click();
+      document.getElementById('systemRestoreFile')?.click();
     }
 
     async function handleSystemRestoreFileChange() {

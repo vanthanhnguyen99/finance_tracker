@@ -120,6 +120,38 @@ test('admin scripts remain valid with a hash-based CSP and no inline event handl
   assert(response.headers.get('content-security-policy').includes(`'sha256-${crypto.createHash('sha256').update(script).digest('base64')}'`));
 });
 
+test('opening the admin restore picker repeatedly keeps one handler per action', async t => {
+  const origin = await startAdmin(t, {});
+  const html = await (await fetch(origin)).text();
+  const script = html.match(/<script>([\s\S]*?)<\/script>/)[1];
+  const buttons = [...html.matchAll(/data-action="([^"]+)"/g)].map(([, action]) => {
+    const button = new EventTarget();
+    button.dataset = { action };
+    button.click = () => button.dispatchEvent(new Event('click'));
+    return button;
+  });
+  let pickerOpens = 0;
+  const picker = new EventTarget();
+  picker.click = () => { pickerOpens++; };
+  const context = vm.createContext({ document: {
+    querySelectorAll: selector => selector === '[data-action]' ? buttons : [],
+    getElementById: id => { assert.equal(id, 'systemRestoreFile'); return picker; }
+  } });
+  context.window = context;
+  new vm.Script(script).runInContext(context);
+  const restore = buttons.find(button => button.dataset.action === 'openSystemRestorePicker');
+  for (let opens = 1; opens <= 3; opens++) {
+    restore.click();
+    assert.equal(pickerOpens, opens, 'Each restore click should open the picker once');
+    for (const button of buttons.filter(button => button !== restore)) {
+      let calls = 0;
+      context[button.dataset.action] = () => { calls++; };
+      button.click();
+      assert.equal(calls, 1, `${button.dataset.action} should run once per click`);
+    }
+  }
+});
+
 test('production login cookies always have Secure and the host prefix', async () => {
   const old = process.env.NODE_ENV;
   try {

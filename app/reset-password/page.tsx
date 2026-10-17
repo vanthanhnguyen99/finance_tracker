@@ -1,14 +1,18 @@
 "use client";
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import Link from "next/link";
 export default function ResetPasswordPage() {
   const [token, setToken] = useState("");
+  const tokenCaptured = useRef(false);
   const [password, setPassword] = useState("");
   const [confirm, setConfirm] = useState("");
   const [message, setMessage] = useState("");
   const [done, setDone] = useState(false);
   const [busy, setBusy] = useState(false);
   useEffect(() => {
+    // Strict Mode replays this effect after the first pass removes the fragment.
+    if (tokenCaptured.current) return;
+    tokenCaptured.current = true;
     setToken(new URLSearchParams(location.hash.slice(1)).get("token") ?? "");
     history.replaceState(null, "", location.pathname);
   }, []);
