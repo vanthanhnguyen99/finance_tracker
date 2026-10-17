@@ -14,21 +14,21 @@ export function StatCard({
 }) {
   const toneStyles =
     tone === "balance"
-      ? "stat-card-balance border-primary-600 bg-primary-600 text-white"
-      : "bg-white";
+      ? "stat-card-balance border-primary-600 bg-primary-600 text-on-accent"
+      : "bg-surface";
   const valueStyles =
     tone === "income"
-      ? "text-emerald-600"
+      ? "text-success-dark"
       : tone === "expense"
         ? "text-danger"
         : tone === "balance"
-          ? "text-white"
+          ? "text-on-accent"
           : "text-ink";
 
   const Icon = tone === "income" ? IncomeIcon : tone === "expense" ? ExpenseIcon : WalletIcon;
   const iconStyles =
     tone === "balance"
-      ? "bg-white/15 text-white"
+      ? "bg-surface/15 text-on-accent"
       : tone === "income"
         ? "bg-success-light text-success-dark"
         : tone === "expense"
@@ -39,7 +39,7 @@ export function StatCard({
     <div className={`card ${toneStyles}`}>
       <div className="flex items-start justify-between gap-3">
         <div className="min-w-0">
-          <p className={`text-sm font-medium ${tone === "balance" ? "text-white/75" : "text-slate-500"}`}>
+          <p className={`text-sm font-medium ${tone === "balance" ? "text-on-accent/75" : "text-slate-500"}`}>
             {title}
           </p>
           <p className={`money-value mt-2 break-words text-2xl font-bold leading-8 sm:text-[28px] ${valueStyles}`}>
@@ -50,7 +50,7 @@ export function StatCard({
           <Icon className="h-5 w-5" />
         </span>
       </div>
-      {hint ? <div className={`mt-3 text-xs ${tone === "balance" ? "text-white/75" : "text-slate-500"}`}>{hint}</div> : null}
+      {hint ? <div className={`mt-3 text-xs ${tone === "balance" ? "text-on-accent/75" : "text-slate-500"}`}>{hint}</div> : null}
     </div>
   );
 }

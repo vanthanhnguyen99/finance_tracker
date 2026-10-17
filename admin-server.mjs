@@ -1,5 +1,6 @@
 import crypto from "node:crypto";
 import http from "node:http";
+import { hashPassword, PasswordBusyError } from "./server/password.mjs";
 import { URL, pathToFileURL } from "node:url";
 import { PrismaClient } from "@prisma/client";
 
@@ -38,7 +39,7 @@ function sendHtml(res, html) {
   res.writeHead(200, {
     ...BASE_SECURITY_HEADERS,
     "Content-Type": "text/html; charset=utf-8",
-    "Content-Security-Policy": ADMIN_CSP
+    "Content-Security-Policy": ADMIN_CSP.replace("script-src 'self' 'unsafe-inline'", `script-src 'sha256-${crypto.createHash("sha256").update(html.match(/<script>([\s\S]*?)<\/script>/)?.[1] ?? "").digest("base64")}'`)
   });
   res.end(html);
 }
@@ -106,16 +107,14 @@ async function parseBody(req) {
   });
 }
 
-function hashPassword(password) {
-  const salt = crypto.randomBytes(16).toString("hex");
-  const hash = crypto.scryptSync(password, salt, 64).toString("hex");
-  return `${HASH_SCHEME}:${salt}:${hash}`;
-}
-
 function checkRateLimit(key, limit, windowMs) {
   const now = Date.now();
   const current = mutationRateStore.get(key);
   if (!current || now > current.resetAt) {
+    if (mutationRateStore.size >= 10000) {
+      for (const [storedKey, value] of mutationRateStore) if (now > value.resetAt) mutationRateStore.delete(storedKey);
+      if (!mutationRateStore.has(key) && mutationRateStore.size >= 10000) return { allowed: false, retryAfterSeconds: 60 };
+    }
     mutationRateStore.set(key, { count: 1, resetAt: now + windowMs });
     return { allowed: true, retryAfterSeconds: Math.ceil(windowMs / 1000) };
   }
@@ -158,7 +157,7 @@ function parsePositiveNumber(value, fieldName) {
 }
 
 function validateSystemBackup(backup) {
-  if (!backup || Array.isArray(backup) || backup.version !== 1 ||
+  if (!backup || Array.isArray(backup) || ![1, 2].includes(backup.version) ||
       backup.scope !== "system" || backup.source !== "finance-tracker-admin") {
     throw new Error("Invalid system backup format or version");
   }
@@ -167,6 +166,7 @@ function validateSystemBackup(backup) {
     wallets: "walletCount", users: "userCount", sessions: "sessionCount",
     passwordResetRequests: "passwordResetRequestCount", transactions: "transactionCount", exchanges: "exchangeCount"
   };
+  if (backup.version === 2) collections.budgets = "budgetCount";
   for (const [key, countKey] of Object.entries(collections)) {
     if (!Array.isArray(backup[key])) throw new Error(`backup.${key} must be an array`);
     if (backup.meta && backup.meta[countKey] !== backup[key].length) {
@@ -330,6 +330,28 @@ function normalizeSystemExchanges(records) {
   });
 }
 
+function normalizeBudgets(records) {
+  const ids = new Set();
+  const identities = new Set();
+  return records.map((row, index) => {
+    const field = `budgets[${index}]`;
+    if (!row || typeof row.id !== "string" || !row.id.trim() || typeof row.userId !== "string" || !row.userId.trim()) throw new Error(`${field} id/userId is required`);
+    if (typeof row.month !== "string" || !/^(?!0000)\d{4}-(0[1-9]|1[0-2])$/.test(row.month)) throw new Error(`${field}.month is invalid`);
+    if (!allowedCurrencies.has(row.currency)) throw new Error(`${field}.currency is invalid`);
+    let scopeKey;
+    if (["TOTAL", "UNCATEGORIZED"].includes(row.scope) && row.category === null) scopeKey = row.scope;
+    else if (row.scope === "CATEGORY" && typeof row.category === "string" && row.category.trim() && row.category.length <= 200) scopeKey = `CATEGORY:${row.category}`;
+    else throw new Error(`${field}.scope/category is invalid`);
+    if (scopeKey !== row.scopeKey || !Number.isInteger(row.limitMinor) || row.limitMinor <= 0 || row.limitMinor > 2147483647) throw new Error(`${field}.scopeKey/limitMinor is invalid`);
+    const identity = JSON.stringify([row.userId, row.month, row.currency, scopeKey]);
+    if (ids.has(row.id) || identities.has(identity)) throw new Error(`${field} is duplicated`);
+    ids.add(row.id); identities.add(identity);
+    return { id: row.id, userId: row.userId, month: row.month, currency: row.currency, scope: row.scope,
+      category: row.category, scopeKey, limitMinor: row.limitMinor,
+      createdAt: parseIsoDate(row.createdAt, `${field}.createdAt`), updatedAt: parseIsoDate(row.updatedAt, `${field}.updatedAt`) };
+  });
+}
+
 function appHtml() {
   return `<!doctype html>
 <html lang="vi">
@@ -407,21 +429,21 @@ function appHtml() {
       </div>
       <div class="controls">
         <input id="token" type="password" placeholder="Nhập ADMIN_TOKEN" />
-        <button class="btn btn-primary" onclick="loadUsers()">Tải dữ liệu</button>
-        <input id="search" placeholder="Tìm theo tên/email..." oninput="onFilterChange()" />
-        <select id="statusFilter" onchange="onFilterChange()">
+        <button class="btn btn-primary" data-action="loadUsers">Tải dữ liệu</button>
+        <input id="search" placeholder="Tìm theo tên/email..." data-filter="input" />
+        <select id="statusFilter" data-filter="change">
           <option value="ALL">Tất cả trạng thái</option>
           <option value="PENDING">PENDING</option>
           <option value="ACTIVE">ACTIVE</option>
           <option value="DISABLED">DISABLED</option>
           <option value="REJECTED">REJECTED</option>
         </select>
-        <button class="btn btn-ghost" onclick="approveAllPending()">Duyệt tất cả PENDING</button>
+        <button class="btn btn-ghost" data-action="approveAllPending">Duyệt tất cả PENDING</button>
       </div>
       <div class="actions">
-        <button class="btn btn-ghost" onclick="downloadSystemBackup()">Backup toàn hệ thống (JSON)</button>
-        <button class="btn btn-danger" onclick="openSystemRestorePicker()">Restore toàn hệ thống từ file</button>
-        <button class="btn btn-warn" onclick="clearSystemUserData()">Clear user data (giữ session)</button>
+        <button class="btn btn-ghost" data-action="downloadSystemBackup">Backup toàn hệ thống (JSON)</button>
+        <button class="btn btn-danger" data-action="openSystemRestorePicker">Restore toàn hệ thống từ file</button>
+        <button class="btn btn-warn" data-action="clearSystemUserData">Clear user data (giữ session)</button>
         <input id="systemRestoreFile" type="file" accept="application/json" style="display:none" />
       </div>
       <div id="msg" class="msg"></div>
@@ -522,15 +544,11 @@ function appHtml() {
         const statusRaw = ['PENDING', 'ACTIVE', 'DISABLED', 'REJECTED'].includes(u.status)
           ? u.status
           : 'PENDING';
-        const pendingReset = Array.isArray(u.passwordResetRequests) && u.passwordResetRequests.length > 0
-          ? u.passwordResetRequests[0]
-          : null;
         const displayName = escapeHtml(u.displayName || '(Không tên)');
         const email = escapeHtml(u.email || '(Không có email)');
         const status = escapeHtml(statusRaw);
         const note = escapeHtml(u.note || '(trống)');
         const sessions = Number(u._count?.sessions ?? 0);
-        const pendingResetCreatedAt = pendingReset ? escapeHtml(formatDate(pendingReset.createdAt)) : '';
         const createdAt = escapeHtml(formatDate(u.createdAt));
         const updatedAt = escapeHtml(formatDate(u.updatedAt));
         const editDisplayName = escapeHtml(u.displayName || '');
@@ -549,7 +567,6 @@ function appHtml() {
           '<div class="meta">' +
             '<div>Note: ' + note + '</div>' +
             '<div>Sessions đang mở: ' + sessions + '</div>' +
-            '<div>Yêu cầu quên mật khẩu: ' + (pendingReset ? ('PENDING từ ' + pendingResetCreatedAt) : 'Không có') + '</div>' +
             '<div>Tạo lúc: ' + createdAt + '</div>' +
             '<div>Cập nhật: ' + updatedAt + '</div>' +
           '</div>' +
@@ -560,10 +577,7 @@ function appHtml() {
             '<button class="btn btn-danger js-reject">Reject</button>' +
             '<button class="btn btn-ghost js-revoke">Thu hồi session</button>' +
             '<button class="btn btn-danger js-clear-data">Xóa data user</button>' +
-            (pendingReset
-              ? '<button class="btn btn-ok js-approve-reset">Duyệt mật khẩu mới</button>' +
-                '<button class="btn btn-danger js-reject-reset">Từ chối mật khẩu mới</button>'
-              : '') +
+            '<button class="btn btn-ok js-recovery">Cấp liên kết khôi phục</button>' +
             '<button class="btn btn-ghost js-toggle-edit">Sửa thông tin</button>' +
           '</div>' +
           '<div class="edit">' +
@@ -584,10 +598,8 @@ function appHtml() {
         wrap.querySelector('.js-reject')?.addEventListener('click', () => updateUserStatus(u.id, 'REJECTED'));
         wrap.querySelector('.js-revoke')?.addEventListener('click', () => revokeSessions(u.id));
         wrap.querySelector('.js-clear-data')?.addEventListener('click', () => clearUserData(u));
-        if (pendingReset) {
-          wrap.querySelector('.js-approve-reset')?.addEventListener('click', () => approvePasswordReset(pendingReset.id));
-          wrap.querySelector('.js-reject-reset')?.addEventListener('click', () => rejectPasswordReset(pendingReset.id));
-        }
+        wrap.querySelector('.js-recovery')?.addEventListener('click', () => createRecoveryLink(u.id));
+
         wrap.querySelector('.js-toggle-edit')?.addEventListener('click', () => {
           editPanel?.classList.toggle('open');
         });
@@ -612,14 +624,13 @@ function appHtml() {
       });
     }
 
-    async function approvePasswordReset(requestId) {
+    async function createRecoveryLink(userId) {
+      if (!confirm('Bạn đã xác minh danh tính chủ tài khoản qua kênh độc lập? Chỉ gửi liên kết cho người đã được xác minh.')) return;
       try {
-        await api('/api/password-reset-requests/' + requestId + '/approve', 'POST');
-        setMsg('Đã duyệt mật khẩu mới. User cần đăng nhập lại bằng mật khẩu mới.');
-        await loadUsers();
-      } catch (e) {
-        setMsg(e.message);
-      }
+        const result = await api('/api/users/' + userId + '/recovery-link', 'POST', { identityVerified: true });
+        prompt('Liên kết dùng một lần, hết hạn sau 15 phút. Gửi riêng cho chủ tài khoản đã được xác minh:', result.url);
+        setMsg('Đã cấp liên kết khôi phục mới. Liên kết trước đó đã bị hủy.');
+      } catch (e) { setMsg(e.message); }
     }
 
     async function downloadSystemBackup() {
@@ -643,7 +654,9 @@ function appHtml() {
     }
 
     function openSystemRestorePicker() {
-      document.getElementById('systemRestoreFile')?.click();
+      document.querySelectorAll('[data-action]').forEach(button => button.addEventListener('click', () => window[button.dataset.action]()));
+    document.querySelectorAll('[data-filter]').forEach(input => input.addEventListener(input.dataset.filter, onFilterChange));
+    document.getElementById('systemRestoreFile')?.click();
     }
 
     async function handleSystemRestoreFileChange() {
@@ -814,13 +827,15 @@ function appHtml() {
     window.saveUser = saveUser;
     window.revokeSessions = revokeSessions;
     window.approveAllPending = approveAllPending;
-    window.approvePasswordReset = approvePasswordReset;
+
     window.rejectPasswordReset = rejectPasswordReset;
     window.clearUserData = clearUserData;
     window.clearSystemUserData = clearSystemUserData;
     window.downloadSystemBackup = downloadSystemBackup;
     window.openSystemRestorePicker = openSystemRestorePicker;
 
+    document.querySelectorAll('[data-action]').forEach(button => button.addEventListener('click', () => window[button.dataset.action]()));
+    document.querySelectorAll('[data-filter]').forEach(input => input.addEventListener(input.dataset.filter, onFilterChange));
     document.getElementById('systemRestoreFile')?.addEventListener('change', handleSystemRestoreFileChange);
   </script>
 </body>
@@ -853,19 +868,15 @@ async function handleAdminRequest(req, res, prisma) {
       return;
     }
 
+    const remoteIp = req.socket.remoteAddress ?? "unknown";
     if (!isAuthorized(req)) {
+      const rate = checkRateLimit(`unauthorized:${remoteIp}`, 30, 60000);
+      if (!rate.allowed) { sendJson(res, 429, { error: "Rate limit exceeded" }); return; }
       sendJson(res, 401, { error: "Unauthorized" });
       return;
     }
 
-    if (
-      (req.method === "PATCH" && url.pathname.startsWith("/api/users/")) ||
-      (req.method === "POST" && url.pathname.endsWith("/restore")) ||
-      (req.method === "POST" && url.pathname === "/api/system/clear-user-data") ||
-      (req.method === "POST" && url.pathname.endsWith("/clear-data")) ||
-      (req.method === "POST" && url.pathname.endsWith("/revoke-sessions")) ||
-      (req.method === "POST" && url.pathname.startsWith("/api/password-reset-requests/"))
-    ) {
+    if (["POST", "PATCH", "DELETE", "PUT"].includes(req.method)) {
       const remoteIp = req.socket.remoteAddress ?? "unknown";
       const key = `admin:${remoteIp}:${getToken(req).slice(0, 8)}`;
       const rate = checkRateLimit(key, ADMIN_MUTATION_LIMIT, ADMIN_MUTATION_WINDOW_MS);
@@ -879,15 +890,10 @@ async function handleAdminRequest(req, res, prisma) {
     if (req.method === "GET" && url.pathname === "/api/users") {
       const users = await prisma.userAllowlist.findMany({
         orderBy: { createdAt: "desc" },
-        include: {
-          passwordResetRequests: {
-            where: { status: "PENDING" },
-            orderBy: { createdAt: "desc" },
-            take: 1
-          },
-          _count: {
-            select: { sessions: true }
-          }
+        select: {
+          id: true, displayName: true, email: true, note: true, status: true,
+          primaryCurrency: true, createdAt: true, updatedAt: true,
+          _count: { select: { sessions: true } }
         }
       });
       sendJson(res, 200, { users });
@@ -895,20 +901,21 @@ async function handleAdminRequest(req, res, prisma) {
     }
 
     if (req.method === "GET" && url.pathname === "/api/system/backup") {
-      const [wallets, users, sessions, passwordResetRequests, transactions, exchanges] = await prisma.$transaction(
+      const [wallets, users, sessions, passwordResetRequests, transactions, exchanges, budgets] = await prisma.$transaction(
         (tx) => Promise.all([
           tx.wallet.findMany({ orderBy: { currency: "asc" } }),
           tx.userAllowlist.findMany({ orderBy: { createdAt: "asc" } }),
           tx.session.findMany({ orderBy: { createdAt: "asc" } }),
           tx.passwordResetRequest.findMany({ orderBy: { createdAt: "asc" } }),
           tx.transaction.findMany({ orderBy: { createdAt: "asc" } }),
-          tx.exchange.findMany({ orderBy: { createdAt: "asc" } })
+          tx.exchange.findMany({ orderBy: { createdAt: "asc" } }),
+          tx.budget.findMany({ orderBy: { createdAt: "asc" } })
         ]),
         { isolationLevel: "RepeatableRead", timeout: 30000 }
       );
 
       sendJson(res, 200, {
-        version: 1,
+        version: 2,
         scope: "system",
         source: "finance-tracker-admin",
         exportedAt: new Date().toISOString(),
@@ -970,13 +977,15 @@ async function handleAdminRequest(req, res, prisma) {
           provider: row.provider,
           createdAt: row.createdAt.toISOString()
         })),
+        budgets: budgets.map(row => ({ ...row, createdAt: row.createdAt.toISOString(), updatedAt: row.updatedAt.toISOString() })),
         meta: {
           walletCount: wallets.length,
           userCount: users.length,
           sessionCount: sessions.length,
           passwordResetRequestCount: passwordResetRequests.length,
           transactionCount: transactions.length,
-          exchangeCount: exchanges.length
+          exchangeCount: exchanges.length,
+          budgetCount: budgets.length
         }
       });
       return;
@@ -986,7 +995,7 @@ async function handleAdminRequest(req, res, prisma) {
       const body = await parseBody(req);
       const mode = body?.mode === "append" ? "append" : "replace";
       const backupPayload = body?.backup ?? body;
-      let wallets, users, sessions, passwordResetRequests, transactions, exchanges;
+      let wallets, users, sessions, passwordResetRequests, transactions, exchanges, budgets;
       try {
         validateSystemBackup(backupPayload);
         wallets = normalizeWallets(backupPayload.wallets);
@@ -995,12 +1004,16 @@ async function handleAdminRequest(req, res, prisma) {
         passwordResetRequests = normalizePasswordResetRequests(backupPayload.passwordResetRequests);
         transactions = normalizeSystemTransactions(backupPayload.transactions);
         exchanges = normalizeSystemExchanges(backupPayload.exchanges);
+        budgets = backupPayload.version === 2 ? normalizeBudgets(backupPayload.budgets) : [];
       } catch (error) {
         sendJson(res, 400, { error: error.message });
         return;
       }
       const userIds = new Set(users.map((row) => row.id));
 
+      for (const row of budgets) {
+        if (!userIds.has(row.userId)) { sendJson(res, 400, { error: `budgets userId not found: ${row.userId}` }); return; }
+      }
       for (const row of sessions) {
         if (!userIds.has(row.userId)) {
           sendJson(res, 400, { error: `sessions userId not found: ${row.userId}` });
@@ -1046,6 +1059,7 @@ async function handleAdminRequest(req, res, prisma) {
         }
 
         if (mode === "replace") {
+          await tx.budget.deleteMany({});
           await tx.session.deleteMany({});
           await tx.passwordResetRequest.deleteMany({});
           await tx.exchange.deleteMany({});
@@ -1055,6 +1069,7 @@ async function handleAdminRequest(req, res, prisma) {
 
         if (users.length > 0) {
           await tx.userAllowlist.createMany({
+            skipDuplicates: mode === "append",
             data: users.map((row) => ({
               id: row.id,
               displayName: row.displayName,
@@ -1069,8 +1084,13 @@ async function handleAdminRequest(req, res, prisma) {
           });
         }
 
+        if (budgets.length > 0) {
+          await tx.budget.createMany({ data: budgets, skipDuplicates: mode === "append" });
+        }
+
         if (transactions.length > 0) {
           await tx.transaction.createMany({
+            skipDuplicates: mode === "append",
             data: transactions.map((row) => ({
               id: row.id,
               userId: row.userId,
@@ -1093,6 +1113,7 @@ async function handleAdminRequest(req, res, prisma) {
             throw new Error("Wallet DKK/VND is missing in backup");
           }
           await tx.exchange.createMany({
+            skipDuplicates: mode === "append",
             data: exchanges.map((row) => ({
               id: row.id,
               userId: row.userId,
@@ -1111,28 +1132,20 @@ async function handleAdminRequest(req, res, prisma) {
 
         if (passwordResetRequests.length > 0) {
           await tx.passwordResetRequest.createMany({
+            skipDuplicates: mode === "append",
             data: passwordResetRequests.map((row) => ({
               id: row.id,
               userId: row.userId,
               newPasswordHash: row.newPasswordHash,
-              status: row.status,
+              status: row.status === "PENDING" ? "REJECTED" : row.status,
               createdAt: row.createdAt,
-              reviewedAt: row.reviewedAt
+              reviewedAt: row.reviewedAt ?? new Date()
             }))
           });
         }
 
-        if (sessions.length > 0) {
-          await tx.session.createMany({
-            data: sessions.map((row) => ({
-              id: row.id,
-              userId: row.userId,
-              token: row.token,
-              expiresAt: row.expiresAt,
-              createdAt: row.createdAt
-            }))
-          });
-        }
+        // Sessions from a backup are intentionally not restored.
+
       }, LEDGER_TRANSACTION_OPTIONS);
 
       sendJson(res, 200, {
@@ -1140,10 +1153,11 @@ async function handleAdminRequest(req, res, prisma) {
         mode,
         walletCount: wallets.length,
         userCount: users.length,
-        sessionCount: sessions.length,
+        sessionCount: 0,
         passwordResetRequestCount: passwordResetRequests.length,
         transactionCount: transactions.length,
-        exchangeCount: exchanges.length
+        exchangeCount: exchanges.length,
+        budgetCount: budgets.length
       });
       return;
     }
@@ -1189,21 +1203,22 @@ async function handleAdminRequest(req, res, prisma) {
       }
       if (typeof body.displayName === "string") {
         const displayName = body.displayName.trim();
-        if (!displayName) {
+        if (!displayName || displayName.length > 100) {
           sendJson(res, 400, { error: "displayName required" });
           return;
         }
         data.displayName = displayName;
       }
       if (typeof body.note === "string") {
+        if (body.note.length > 2000) { sendJson(res, 400, { error: "Note too long" }); return; }
         data.note = body.note.trim() || null;
       }
       if (typeof body.password === "string" && body.password.trim()) {
-        if (body.password.length < 6) {
-          sendJson(res, 400, { error: "Mật khẩu tối thiểu 6 ký tự" });
+        if (body.password.length < 12 || body.password.length > 128) {
+          sendJson(res, 400, { error: "Mật khẩu phải từ 12 đến 128 ký tự" });
           return;
         }
-        data.passwordHash = hashPassword(body.password);
+        data.passwordHash = await hashPassword(body.password);
       }
 
       if (Object.keys(data).length === 0) {
@@ -1211,16 +1226,40 @@ async function handleAdminRequest(req, res, prisma) {
         return;
       }
 
-      const user = await prisma.userAllowlist.update({
-        where: { id },
-        data
-      });
-
-      if (data.status && data.status !== "ACTIVE") {
-        await prisma.session.deleteMany({ where: { userId: user.id } });
-      }
+      const user = await prisma.$transaction(async tx => {
+        await lockLedgerUsers(tx, id);
+        const updated = await tx.userAllowlist.update({ where: { id }, data });
+        if (data.passwordHash || (data.status && data.status !== "ACTIVE")) {
+          await tx.session.deleteMany({ where: { userId: id } });
+          await tx.passwordRecoveryToken.deleteMany({ where: { userId: id } });
+          await tx.passwordResetRequest.updateMany({ where: { userId: id, status: "PENDING" }, data: { status: "REJECTED", reviewedAt: new Date() } });
+        }
+        const { passwordHash: ignored, ...safe } = updated;
+        return safe;
+      }, LEDGER_TRANSACTION_OPTIONS);
 
       sendJson(res, 200, { user });
+      return;
+    }
+
+    if (req.method === "POST" && /^\/api\/users\/[^/]+\/recovery-link$/.test(url.pathname)) {
+      const body = await parseBody(req);
+      if (body?.identityVerified !== true) { sendJson(res, 400, { error: "Identity verification is required" }); return; }
+      const id = url.pathname.split("/")[3];
+      const origin = process.env.APP_ORIGINS?.split(",")[0]?.trim();
+      if (!origin || new URL(origin).protocol !== "https:") { sendJson(res, 503, { error: "Recovery origin is not configured" }); return; }
+      const token = crypto.randomBytes(32).toString("hex");
+      const expiresAt = new Date(Date.now() + 15 * 60000);
+      const created = await prisma.$transaction(async tx => {
+        await lockLedgerUsers(tx, id);
+        const user = await tx.userAllowlist.findUnique({ where: { id } });
+        if (user?.status !== "ACTIVE") return false;
+        await tx.passwordRecoveryToken.deleteMany({ where: { userId: id } });
+        await tx.passwordRecoveryToken.create({ data: { userId: id, tokenHash: crypto.createHash("sha256").update(token).digest("hex"), expiresAt } });
+        return true;
+      }, LEDGER_TRANSACTION_OPTIONS);
+      if (!created) { sendJson(res, 404, { error: "Active user not found" }); return; }
+      sendJson(res, 200, { url: `${new URL(origin).origin}/reset-password#token=${token}`, expiresAt: expiresAt.toISOString() });
       return;
     }
 
@@ -1278,71 +1317,15 @@ async function handleAdminRequest(req, res, prisma) {
     }
 
     if (req.method === "POST" && url.pathname.startsWith("/api/password-reset-requests/")) {
-      const parts = url.pathname.split("/").filter(Boolean);
-      const requestId = parts[2];
-      const action = parts[3];
-      if (!requestId || (action !== "approve" && action !== "reject")) {
-        sendJson(res, 400, { error: "Invalid payload" });
-        return;
-      }
-
-      const request = await prisma.passwordResetRequest.findUnique({
-        where: { id: requestId }
-      });
-      if (!request) {
-        sendJson(res, 404, { error: "Yêu cầu không tồn tại" });
-        return;
-      }
-      if (request.status !== "PENDING") {
-        sendJson(res, 409, { error: "Yêu cầu đã được xử lý" });
-        return;
-      }
-
-      if (action === "approve") {
-        await prisma.$transaction(async (tx) => {
-          await tx.userAllowlist.update({
-            where: { id: request.userId },
-            data: { passwordHash: request.newPasswordHash }
-          });
-          await tx.passwordResetRequest.update({
-            where: { id: request.id },
-            data: {
-              status: "APPROVED",
-              reviewedAt: new Date()
-            }
-          });
-          await tx.session.deleteMany({ where: { userId: request.userId } });
-          await tx.passwordResetRequest.updateMany({
-            where: {
-              userId: request.userId,
-              status: "PENDING",
-              id: { not: request.id }
-            },
-            data: {
-              status: "REJECTED",
-              reviewedAt: new Date()
-            }
-          });
-        });
-        sendJson(res, 200, { ok: true });
-        return;
-      }
-
-      await prisma.passwordResetRequest.update({
-        where: { id: request.id },
-        data: {
-          status: "REJECTED",
-          reviewedAt: new Date()
-        }
-      });
-      sendJson(res, 200, { ok: true });
+      sendJson(res, 410, { error: "Legacy password approvals are disabled. Verify identity and issue a recovery link." });
       return;
     }
 
     sendJson(res, 404, { error: "Not found" });
   } catch (error) {
     const message = error instanceof Error ? error.message : "Unknown error";
-    sendJson(res, 500, { error: message });
+    console.error("Admin request failed", error instanceof Error ? error.name : "UnknownError");
+    sendJson(res, error instanceof PasswordBusyError ? 503 : 400, { error: "Không thể xử lý yêu cầu. Kiểm tra dữ liệu và thử lại." });
   }
 }
 

@@ -1,3 +1,4 @@
+import { withApiSecurity, readJsonBody } from "@/lib/http-security";
 import { NextRequest, NextResponse } from "next/server";
 import { Prisma } from "@prisma/client";
 import { toMinor, isValidMinorAmount } from "@/lib/money";
@@ -7,7 +8,7 @@ import { revalidatePath } from "next/cache";
 
 export const dynamic = "force-dynamic";
 
-export async function PATCH(
+async function handlePATCH(
   req: NextRequest,
   { params }: { params: Promise<{ id: string }> }
 ) {
@@ -16,7 +17,7 @@ export async function PATCH(
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   }
 
-  const body = await req.json();
+  const body = await readJsonBody(req);
   const fromAmountMajor = Number(body.fromAmountDkk);
   const toAmountVnd = Number(body.toAmountVnd);
   const hasFeeAmount = body.feeAmount !== undefined;
@@ -38,6 +39,7 @@ export async function PATCH(
     return NextResponse.json({ error: "Invalid fee amount" }, { status: 400 });
   }
 
+  const requestedFeeCurrency = body.feeCurrency as "DKK" | "VND" | undefined;
   const { id } = await params;
 
   const response = await withUserLedger(user.id, async (tx) => {
@@ -50,7 +52,7 @@ export async function PATCH(
 
     const fromAmountDkk = toMinor(fromAmountMajor, "DKK");
     const toAmountVndMinor = toMinor(toAmountVnd, "VND");
-    const feeCurrency = body.feeCurrency ?? exchange.feeCurrency ?? "DKK";
+    const feeCurrency = requestedFeeCurrency ?? exchange.feeCurrency ?? "DKK";
     const previousFeeMajor = (exchange.feeAmount ?? 0) / (exchange.feeCurrency === "VND" ? 1 : 100);
     const feeMajor = hasFeeAmount ? feeAmountMajor : previousFeeMajor;
     const feeAmountMinor = toMinor(feeMajor, feeCurrency);
@@ -89,11 +91,12 @@ export async function PATCH(
   if (response.ok) {
     revalidatePath("/");
     revalidatePath("/history");
+    revalidatePath("/budgets");
   }
   return response;
 }
 
-export async function DELETE(
+async function handleDELETE(
   req: NextRequest,
   { params }: { params: Promise<{ id: string }> }
 ) {
@@ -112,5 +115,9 @@ export async function DELETE(
   }
   revalidatePath("/");
   revalidatePath("/history");
+  revalidatePath("/budgets");
   return NextResponse.json({ ok: true });
 }
+
+export const PATCH = withApiSecurity(handlePATCH);
+export const DELETE = withApiSecurity(handleDELETE);

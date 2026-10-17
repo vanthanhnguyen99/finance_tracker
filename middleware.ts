@@ -1,78 +1,38 @@
+import crypto from "node:crypto";
 import { NextRequest, NextResponse } from "next/server";
 import { SESSION_COOKIE_NAME } from "@/lib/session-constants";
-import { checkRateLimit, getClientIp } from "@/lib/rate-limit";
-
-const protectedPaths = new Set(["/", "/add", "/history"]);
-const mutatingMethods = new Set(["POST", "PUT", "PATCH", "DELETE"]);
-const IMAGE_REQUEST_LIMIT = 120;
-const IMAGE_REQUEST_WINDOW_MS = 60 * 1000;
-const MAX_API_BODY_BYTES = 1024 * 1024; // 1MB
-
-function isSameOriginMutation(req: NextRequest) {
-  const origin = req.headers.get("origin");
-  if (!origin) return true;
-
-  let parsedOrigin: URL;
-  try {
-    parsedOrigin = new URL(origin);
-  } catch {
-    return false;
-  }
-
-  const hosts = new Set<string>();
-  const forwardedHost = req.headers.get("x-forwarded-host")?.split(",")[0]?.trim();
-  const host = req.headers.get("host")?.trim();
-  if (forwardedHost) hosts.add(forwardedHost);
-  if (host) hosts.add(host);
-  if (req.nextUrl.host) hosts.add(req.nextUrl.host);
-
-  return hosts.has(parsedOrigin.host);
-}
+import { isSameOriginMutation, MAX_API_BODY_BYTES, PRIVATE_CACHE_CONTROL } from "@/lib/http-security";
 
 export function middleware(req: NextRequest) {
-  const { pathname } = req.nextUrl;
-  const hasSession = Boolean(req.cookies.get(SESSION_COOKIE_NAME)?.value);
-  const middlewareSubrequest = req.headers.get("x-middleware-subrequest");
-
-  // Mitigation: reject external attempts to inject Next.js middleware internal header.
-  if (middlewareSubrequest) {
-    return new NextResponse("Bad Request", { status: 400 });
-  }
-
-  if (pathname.startsWith("/api/") && mutatingMethods.has(req.method)) {
-    if (!isSameOriginMutation(req)) {
-      return NextResponse.json({ error: "Invalid origin" }, { status: 403 });
-    }
-
-    const contentLength = req.headers.get("content-length");
-    if (contentLength) {
-      const parsedLength = Number(contentLength);
-      if (!Number.isFinite(parsedLength) || parsedLength < 0) {
-        return NextResponse.json({ error: "Invalid content length" }, { status: 400 });
-      }
-      if (parsedLength > MAX_API_BODY_BYTES) {
-        return NextResponse.json({ error: "Payload too large" }, { status: 413 });
-      }
-    }
-  }
-
-  if (pathname === "/_next/image") {
-    const ip = getClientIp(req.headers.get("x-forwarded-for"), "unknown");
-    const rate = checkRateLimit(`img:${ip}`, IMAGE_REQUEST_LIMIT, IMAGE_REQUEST_WINDOW_MS);
-    if (!rate.allowed) {
-      const response = new NextResponse("Too Many Requests", { status: 429 });
-      response.headers.set("Retry-After", String(rate.retryAfterSeconds));
-      return response;
-    }
-  }
-
-  if (protectedPaths.has(pathname) && !hasSession) {
-    return NextResponse.redirect(new URL("/login", req.url));
-  }
-
-  return NextResponse.next();
+  const nonce = crypto.randomBytes(18).toString("base64");
+  const development = process.env.NODE_ENV !== "production";
+  const csp = [
+    "default-src 'self'", `script-src 'self' 'nonce-${nonce}' 'strict-dynamic'${development ? " 'unsafe-eval'" : ""}`,
+    "style-src 'self' 'unsafe-inline'", "img-src 'self' data: blob:", "font-src 'self'",
+    `connect-src 'self'${development ? " ws: wss:" : ""}`, "object-src 'none'", "base-uri 'self'",
+    "form-action 'self'", "frame-ancestors 'none'"
+  ].join("; ");
+  const requestHeaders = new Headers(req.headers);
+  requestHeaders.set("x-nonce", nonce);
+  requestHeaders.set("Content-Security-Policy", csp);
+  let response: NextResponse;
+  const pathname = req.nextUrl.pathname;
+  if (req.headers.has("x-middleware-subrequest")) response = new NextResponse("Bad Request", { status: 400 });
+  else if (pathname.startsWith("/api/") && ["POST", "PUT", "PATCH", "DELETE"].includes(req.method) && !isSameOriginMutation(req))
+    response = NextResponse.json({ error: "Invalid origin" }, { status: 403 });
+  else if (pathname.startsWith("/api/") && req.headers.has("content-length") && (!/^\d+$/.test(req.headers.get("content-length")!) || Number(req.headers.get("content-length")) > MAX_API_BODY_BYTES))
+    response = NextResponse.json({ error: "Payload too large" }, { status: 413 });
+  else if (new Set(["/", "/add", "/history", "/budgets", "/reports"]).has(pathname) && !req.cookies.get(SESSION_COOKIE_NAME)?.value)
+    response = NextResponse.redirect(new URL("/login", req.url));
+  else response = NextResponse.next({ request: { headers: requestHeaders } });
+  response.headers.set("Content-Security-Policy", csp);
+  response.headers.set("Cache-Control", PRIVATE_CACHE_CONTROL);
+  response.headers.set("CDN-Cache-Control", "no-store");
+  response.headers.set("Cloudflare-CDN-Cache-Control", "no-store");
+  response.headers.set("Referrer-Policy", "no-referrer");
+  return response;
 }
-
 export const config = {
-  matcher: ["/", "/add", "/history", "/login", "/register", "/_next/image", "/api/:path*"]
+  runtime: "nodejs",
+  matcher: ["/((?!_next/static|_next/image|favicon.ico|logo.svg|manifest.webmanifest).*)"]
 };

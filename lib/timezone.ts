@@ -12,17 +12,29 @@ export type DateParts = {
   second: number;
 };
 
+// Cache formatter configuration only, never user data. Construction is much
+// more expensive than formatToParts in dashboard loops; bound cookie-driven keys.
+const datePartsFormatters = new Map<string, Intl.DateTimeFormat>();
+const MAX_DATE_PARTS_FORMATTERS = 64;
+
 function getDatePartsInTimeZone(date: Date, timeZone: string): DateParts {
-  const formatter = new Intl.DateTimeFormat("en-US", {
-    timeZone,
-    year: "numeric",
-    month: "2-digit",
-    day: "2-digit",
-    hour: "2-digit",
-    minute: "2-digit",
-    second: "2-digit",
-    hourCycle: "h23"
-  });
+  let formatter = datePartsFormatters.get(timeZone);
+  if (!formatter) {
+    formatter = new Intl.DateTimeFormat("en-US", {
+      timeZone,
+      year: "numeric",
+      month: "2-digit",
+      day: "2-digit",
+      hour: "2-digit",
+      minute: "2-digit",
+      second: "2-digit",
+      hourCycle: "h23"
+    });
+    if (datePartsFormatters.size >= MAX_DATE_PARTS_FORMATTERS) {
+      datePartsFormatters.delete(datePartsFormatters.keys().next().value!);
+    }
+    datePartsFormatters.set(timeZone, formatter);
+  }
   const raw = formatter.formatToParts(date);
   const pick = (type: string) => Number(raw.find((part) => part.type === type)?.value ?? "0");
   const hour = pick("hour");

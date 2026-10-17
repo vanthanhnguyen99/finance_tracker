@@ -1,3 +1,4 @@
+import { withApiSecurity, readJsonBody } from "@/lib/http-security";
 import { NextRequest, NextResponse } from "next/server";
 import { toMinor, isValidMinorAmount } from "@/lib/money";
 import { getWalletBalances, getWalletByCurrency, withUserLedger } from "@/lib/wallet";
@@ -7,7 +8,7 @@ import { expenseAffectsWallet, normalizePaymentMethod } from "@/lib/credit";
 
 export const dynamic = "force-dynamic";
 
-export async function PATCH(
+async function handlePATCH(
   req: NextRequest,
   { params }: { params: Promise<{ id: string }> }
 ) {
@@ -16,7 +17,7 @@ export async function PATCH(
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   }
 
-  const body = await req.json();
+  const body = await readJsonBody(req);
   const amountMajor = Number(body.amountMajor);
   const note = typeof body.note === "string" ? body.note : null;
   const category = typeof body.category === "string" ? body.category : null;
@@ -87,11 +88,12 @@ export async function PATCH(
   if (response.ok) {
     revalidatePath("/");
     revalidatePath("/history");
+    revalidatePath("/budgets");
   }
   return response;
 }
 
-export async function DELETE(
+async function handleDELETE(
   req: NextRequest,
   { params }: { params: Promise<{ id: string }> }
 ) {
@@ -110,5 +112,9 @@ export async function DELETE(
   }
   revalidatePath("/");
   revalidatePath("/history");
+  revalidatePath("/budgets");
   return NextResponse.json({ ok: true });
 }
+
+export const PATCH = withApiSecurity(handlePATCH);
+export const DELETE = withApiSecurity(handleDELETE);

@@ -55,6 +55,7 @@ export default function RegisterPage() {
           <input
             className="input"
             autoComplete="name"
+            maxLength={100}
             placeholder="Tên của bạn"
             value={displayName}
             onChange={(event) => setDisplayName(event.target.value)}
@@ -68,6 +69,7 @@ export default function RegisterPage() {
             type="email"
             inputMode="email"
             autoComplete="email"
+            maxLength={254}
             placeholder="ban@example.com"
             value={email}
             onChange={(event) => setEmail(event.target.value)}
@@ -80,14 +82,16 @@ export default function RegisterPage() {
             className="input"
             type="password"
             autoComplete="new-password"
-            placeholder="Tạo mật khẩu"
+            placeholder="Mật khẩu từ 12 ký tự"
+            minLength={12}
+            maxLength={128}
             value={password}
             onChange={(event) => setPassword(event.target.value)}
             required
           />
           </label>
           <button className="button" type="submit">Tạo tài khoản</button>
-          {message ? <div role="alert" className="alert border-red-200 bg-danger-light text-danger-dark">{message}</div> : null}
+          {message ? <div role="alert" className="alert border-danger/20 bg-danger-light text-danger-dark">{message}</div> : null}
         </form>
 
         <div className="mt-6 border-t border-slate-100 pt-5 text-center text-sm text-slate-500">

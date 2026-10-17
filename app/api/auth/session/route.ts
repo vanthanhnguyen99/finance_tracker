@@ -1,9 +1,10 @@
+import { withApiSecurity } from "@/lib/http-security";
 import { NextRequest, NextResponse } from "next/server";
 import { getApiSessionUser } from "@/lib/auth";
 
 export const dynamic = "force-dynamic";
 
-export async function GET(req: NextRequest) {
+async function handleGET(req: NextRequest) {
   const user = await getApiSessionUser(req);
   if (!user) {
     return NextResponse.json({ authenticated: false }, { status: 401 });
@@ -20,3 +21,5 @@ export async function GET(req: NextRequest) {
     }
   });
 }
+
+export const GET = withApiSecurity(handleGET);

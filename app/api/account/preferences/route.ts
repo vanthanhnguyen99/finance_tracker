@@ -1,15 +1,16 @@
+import { withApiSecurity, readJsonBody } from "@/lib/http-security";
 import { NextRequest, NextResponse } from "next/server";
 import { revalidatePath } from "next/cache";
 import { prisma } from "@/lib/db";
 import { getApiSessionUser } from "@/lib/auth";
 
-export async function PATCH(req: NextRequest) {
+async function handlePATCH(req: NextRequest) {
   const user = await getApiSessionUser(req);
   if (!user) {
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   }
 
-  const body = await req.json();
+  const body = await readJsonBody(req);
   const primaryCurrency = body.primaryCurrency;
   if (primaryCurrency !== "DKK" && primaryCurrency !== "VND") {
     return NextResponse.json({ error: "Đơn vị tiền tệ không hợp lệ" }, { status: 400 });
@@ -26,3 +27,5 @@ export async function PATCH(req: NextRequest) {
 
   return NextResponse.json({ ok: true, primaryCurrency });
 }
+
+export const PATCH = withApiSecurity(handlePATCH);

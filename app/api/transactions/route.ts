@@ -1,3 +1,4 @@
+import { withApiSecurity, readJsonBody } from "@/lib/http-security";
 import { NextRequest, NextResponse } from "next/server";
 import { prisma } from "@/lib/db";
 import { getWalletByCurrency, getWalletBalances, withUserLedger } from "@/lib/wallet";
@@ -8,7 +9,7 @@ import { expenseAffectsWallet, normalizePaymentMethod } from "@/lib/credit";
 
 export const dynamic = "force-dynamic";
 
-export async function GET(req: NextRequest) {
+async function handleGET(req: NextRequest) {
   const user = await getApiSessionUser(req);
   if (!user) {
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
@@ -63,19 +64,20 @@ export async function GET(req: NextRequest) {
       ...where,
       userId: user.id
     },
-    orderBy: { createdAt: "desc" }
+    orderBy: { createdAt: "desc" },
+    take: 1000
   });
 
   return NextResponse.json({ transactions });
 }
 
-export async function POST(req: NextRequest) {
+async function handlePOST(req: NextRequest) {
   const user = await getApiSessionUser(req);
   if (!user) {
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   }
 
-  const body = await req.json();
+  const body = await readJsonBody(req);
   const type = body.type as "INCOME" | "EXPENSE";
   const currency = (body.currency ?? user.primaryCurrency) as "DKK" | "VND";
   const amountMajor = Number(body.amountMajor);
@@ -140,3 +142,6 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ transaction });
   });
 }
+
+export const GET = withApiSecurity(handleGET);
+export const POST = withApiSecurity(handlePOST);

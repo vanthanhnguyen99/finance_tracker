@@ -161,10 +161,10 @@ Bottom navigation gồm tối đa 5 mục:
 | Mục | Nhãn | Vai trò |
 |---|---|---|
 | 1 | Tổng quan | Màn hình mặc định |
-| 2 | Giao dịch | Xem và quản lý giao dịch |
+| 2 | Báo cáo | Trang Sắp ra mắt |
 | 3 | Thêm | Hành động chính |
-| 4 | Ngân sách | Quản lý ngân sách |
-| 5 | Báo cáo | Phân tích chi tiêu |
+| 4 | Giao dịch | Xem và quản lý giao dịch |
+| 5 | Ngân sách | Quản lý ngân sách |
 
 Mục **Tài khoản** được truy cập từ avatar hoặc menu ở top app bar để tránh bottom navigation quá tải.
 
@@ -172,7 +172,8 @@ Mục **Tài khoản** được truy cập từ avatar hoặc menu ở top app b
 
 - Bottom navigation luôn cố định dưới cùng trên mobile.
 - Tôn trọng `safe-area-inset-bottom`.
-- Nút “Thêm” có thể nổi bật hơn nhưng không được phá vỡ cân bằng bố cục.
+- Nút **Thêm luôn lớn nhất và ở chính giữa** (vị trí thứ 3 trong 5 mục). Không thay đổi quy tắc này khi chỉnh bố cục.
+- Báo cáo nằm giữa Tổng quan và Thêm; mở trang `/reports` hiển thị **Sắp ra mắt**.
 - Không hiển thị bottom navigation trong:
   - Màn hình tạo/sửa giao dịch.
   - Modal toàn màn hình.
@@ -490,8 +491,9 @@ Trên desktop:
 
 ### Kích thước
 
-- Chiều cao tối thiểu: 64px, chưa tính safe area.
-- Icon: 22–24px.
+- Chiều cao thanh điều hướng: tối thiểu 80px, chưa tính safe area.
+- Nút Thêm: hình tròn 56×56px, icon 28px; luôn lớn nhất và ở chính giữa.
+- Icon các mục còn lại: 22–24px.
 - Nhãn: 11–12px.
 - Touch target: tối thiểu 48×48px.
 
@@ -1091,6 +1093,8 @@ Fields:
 ---
 
 ## 8.8. Báo cáo
+
+**Trạng thái hiện tại:** tab Báo cáo mở `/reports`, chỉ hiển thị **Sắp ra mắt**. Các yêu cầu phân tích dưới đây dành cho giai đoạn sau.
 
 ### Nguyên tắc
 

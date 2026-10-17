@@ -1,3 +1,4 @@
+import { withApiSecurity, readJsonBody } from "@/lib/http-security";
 import { NextRequest, NextResponse } from "next/server";
 import { prisma } from "@/lib/db";
 import { getWalletByCurrency, getWalletBalances, withUserLedger } from "@/lib/wallet";
@@ -7,13 +8,13 @@ import { getApiSessionUser } from "@/lib/auth";
 
 export const dynamic = "force-dynamic";
 
-export async function POST(req: NextRequest) {
+async function handlePOST(req: NextRequest) {
   const user = await getApiSessionUser(req);
   if (!user) {
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   }
 
-  const body = await req.json();
+  const body = await readJsonBody(req);
   const fromAmountMajor = Number(body.fromAmountDkk);
   const toAmountVnd = Number(body.toAmountVnd);
   const hasFeeAmount = body.feeAmount !== undefined && body.feeAmount !== null && body.feeAmount !== "";
@@ -95,7 +96,7 @@ export async function POST(req: NextRequest) {
   });
 }
 
-export async function GET(req: NextRequest) {
+async function handleGET(req: NextRequest) {
   const user = await getApiSessionUser(req);
   if (!user) {
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
@@ -103,7 +104,11 @@ export async function GET(req: NextRequest) {
 
   const exchanges = await prisma.exchange.findMany({
     where: { userId: user.id },
-    orderBy: { createdAt: "desc" }
+    orderBy: { createdAt: "desc" },
+    take: 1000
   });
   return NextResponse.json({ exchanges });
 }
+
+export const POST = withApiSecurity(handlePOST);
+export const GET = withApiSecurity(handleGET);

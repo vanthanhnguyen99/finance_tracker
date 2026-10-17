@@ -2,47 +2,97 @@ services:
   db:
     image: postgres:15
     restart: unless-stopped
-    env_file:
-      - .env
     environment:
-      POSTGRES_USER: ${POSTGRES_USER:-expense_user}
-      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-expense_password}
-      POSTGRES_DB: ${POSTGRES_DB:-expense_db}
+      POSTGRES_USER: ${POSTGRES_USER:?Set POSTGRES_USER}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD}
+      POSTGRES_DB: ${POSTGRES_DB:?Set POSTGRES_DB}
     volumes:
       - pgdata:/var/lib/postgresql/data
       - ./backups:/backups
     ports:
       - "127.0.0.1:4500:5432"
-    networks:
-      - internal
+    networks: [internal]
 
   app:
-    build: .
-    depends_on:
-      - db
-    env_file:
-      - .env
+    build:
+      context: .
+      target: app
+    restart: unless-stopped
+    depends_on: [db]
     environment:
-      DATABASE_URL: ${DATABASE_URL}
+      DATABASE_URL: ${APP_DATABASE_URL:-postgresql://unprovisioned:invalid@db:5432/expense_db}
+      APP_ORIGINS: ${APP_ORIGINS:-https://financetracker.wt.id.vn}
+      TRUST_PROXY: "true"
+      GLASS_UI_ENABLED: ${GLASS_UI_ENABLED:-false}
+    read_only: true
+    tmpfs:
+      - /tmp:rw,noexec,nosuid,size=64m,uid=1000,gid=1000
+      - /app/.next/cache:rw,noexec,nosuid,size=64m,uid=1000,gid=1000
+    cap_drop: [ALL]
+    security_opt: [no-new-privileges:true]
+    mem_limit: 768m
+    cpus: 2
+    pids_limit: 128
+    networks: [internal]
+
+  ingress:
+    image: nginxinc/nginx-unprivileged:stable-alpine
+    restart: unless-stopped
+    depends_on: [app]
+    entrypoint: ["nginx", "-g", "daemon off;"]
+    volumes:
+      - ./deploy/nginx.conf:/etc/nginx/nginx.conf:ro
     ports:
-      - "5050:3000"
-    networks:
-      - internal
+      - "192.168.10.160:5050:8080"
+    read_only: true
+    tmpfs:
+      - /tmp:rw,noexec,nosuid,size=32m
+    cap_drop: [ALL]
+    security_opt: [no-new-privileges:true]
+    mem_limit: 128m
+    cpus: 1
+    pids_limit: 64
+    networks: [internal]
 
   admin:
-    build: .
-    depends_on:
-      - db
-    env_file:
-      - .env
+    build:
+      context: .
+      target: admin
+    restart: unless-stopped
+    depends_on: [db]
     environment:
-      DATABASE_URL: ${DATABASE_URL}
+      DATABASE_URL: ${ADMIN_DATABASE_URL:-postgresql://unprovisioned:invalid@db:5432/expense_db}
+      ADMIN_TOKEN: ${ADMIN_TOKEN:?Set ADMIN_TOKEN}
       ADMIN_PORT: 3000
-    command: ["node", "admin-server.mjs"]
+      APP_ORIGINS: ${APP_ORIGINS:-https://financetracker.wt.id.vn}
     ports:
       - "127.0.0.1:6070:3000"
-    networks:
-      - internal
+    read_only: true
+    tmpfs:
+      - /tmp:rw,noexec,nosuid,size=32m,uid=1000,gid=1000
+    cap_drop: [ALL]
+    security_opt: [no-new-privileges:true]
+    mem_limit: 512m
+    cpus: 1
+    pids_limit: 64
+    networks: [internal]
+
+  migrate:
+    profiles: [tools]
+    build:
+      context: .
+      target: builder
+    environment:
+      DATABASE_URL: ${DATABASE_URL:?Set the migration owner URL}
+    command: ["npx", "prisma", "migrate", "deploy"]
+    user: "1000:1000"
+    read_only: true
+    tmpfs:
+      - /tmp:rw,nosuid,size=64m,uid=1000,gid=1000
+      - /home/node/.npm:rw,noexec,nosuid,size=16m,uid=1000,gid=1000
+    cap_drop: [ALL]
+    security_opt: [no-new-privileges:true]
+    networks: [internal]
 
 networks:
   internal:

@@ -1,5 +1,6 @@
 "use client";
 
+import { clearUiSession } from "@/lib/ui-session";
 import { useState } from "react";
 import { useRouter } from "next/navigation";
 import { LogoutIcon } from "./AppIcons";
@@ -13,6 +14,7 @@ export function LogoutButton({ className = "" }: { className?: string }) {
     setPending(true);
     try {
       await fetch("/api/auth/logout", { method: "POST" });
+      clearUiSession();
       router.replace("/login");
       router.refresh();
     } finally {

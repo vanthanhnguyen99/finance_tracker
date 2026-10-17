@@ -15,7 +15,8 @@ exports.createLoader = function createLoader(overrides = {}) {
     }).outputText;
     const localRequire = (id) => {
       if (Object.hasOwn(overrides, id)) return overrides[id];
-      if (id.startsWith('@/')) return load(id.slice(2) + '.ts');
+      if (id.startsWith('@/')) return id.endsWith('.mjs') ? require(path.resolve(root, id.slice(2))) : load(id.slice(2) + '.ts');
+      if (id.startsWith('.') && id.endsWith('.mjs')) return require(path.resolve(path.dirname(absolute), id));
       if (id.startsWith('.')) return load(path.relative(root, path.resolve(path.dirname(absolute), id)) + '.ts');
       return require(id);
     };
