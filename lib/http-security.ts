@@ -52,7 +52,8 @@ export async function readJsonBody(req: Request): Promise<Record<string, unknown
   if (!body || typeof body !== "object" || Array.isArray(body)) throw new HttpInputError("Dữ liệu không hợp lệ");
   const record = body as Record<string, unknown>;
   if (Object.keys(record).length > 32) throw new HttpInputError("Quá nhiều trường dữ liệu");
-  const limits: Record<string, number> = { email: 254, displayName: 100, password: 128, newPassword: 128, token: 128, note: 2000, category: 200, provider: 200 };
+  // Legacy login passwords are bounded by the payload cap; creation routes enforce 128 characters.
+  const limits: Record<string, number> = { email: 254, displayName: 100, password: MAX_API_BODY_BYTES, newPassword: 128, token: 128, note: 2000, category: 200, provider: 200 };
   for (const [key, value] of Object.entries(record)) {
     if (value != null && typeof value === "object") throw new HttpInputError("Dữ liệu không hợp lệ");
     if (key in limits && value != null && typeof value !== "string") throw new HttpInputError(`Trường ${key} không hợp lệ`);

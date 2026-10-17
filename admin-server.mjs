@@ -693,6 +693,7 @@ function appHtml() {
       return (
         result.transactionCount + ' giao dịch, ' +
         result.exchangeCount + ' exchange, ' +
+        result.budgetCount + ' ngân sách, ' +
         result.passwordResetRequestCount + ' yêu cầu quên mật khẩu'
       );
     }
@@ -700,7 +701,7 @@ function appHtml() {
     async function clearUserData(user) {
       const label = user.email || user.displayName || user.id;
       const shouldClear = window.confirm(
-        'Xóa toàn bộ data nghiệp vụ của user "' + label + '"? Transactions, exchanges và yêu cầu quên mật khẩu sẽ bị xóa. Tài khoản và session vẫn được giữ.'
+        'Xóa toàn bộ data nghiệp vụ của user "' + label + '"? Transactions, exchanges, ngân sách và yêu cầu quên mật khẩu sẽ bị xóa. Tài khoản và session vẫn được giữ.'
       );
       if (!shouldClear) return;
 
@@ -715,7 +716,7 @@ function appHtml() {
 
     async function clearSystemUserData() {
       const shouldClear = window.confirm(
-        'Xóa toàn bộ user data trên hệ thống? Transactions, exchanges và yêu cầu quên mật khẩu của tất cả user sẽ bị xóa. Tài khoản và session vẫn được giữ.'
+        'Xóa toàn bộ user data trên hệ thống? Transactions, exchanges, ngân sách và yêu cầu quên mật khẩu của tất cả user sẽ bị xóa. Tài khoản và session vẫn được giữ.'
       );
       if (!shouldClear) return;
 
@@ -1166,11 +1167,13 @@ async function handleAdminRequest(req, res, prisma) {
         const passwordResetRequests = await tx.passwordResetRequest.deleteMany({});
         const exchanges = await tx.exchange.deleteMany({});
         const transactions = await tx.transaction.deleteMany({});
+        const budgets = await tx.budget.deleteMany({});
 
         return {
           passwordResetRequestCount: passwordResetRequests.count,
           exchangeCount: exchanges.count,
-          transactionCount: transactions.count
+          transactionCount: transactions.count,
+          budgetCount: budgets.count
         };
       }, LEDGER_TRANSACTION_OPTIONS);
 
@@ -1296,11 +1299,13 @@ async function handleAdminRequest(req, res, prisma) {
         const passwordResetRequests = await tx.passwordResetRequest.deleteMany({ where: { userId: id } });
         const exchanges = await tx.exchange.deleteMany({ where: { userId: id } });
         const transactions = await tx.transaction.deleteMany({ where: { userId: id } });
+        const budgets = await tx.budget.deleteMany({ where: { userId: id } });
 
         return {
           passwordResetRequestCount: passwordResetRequests.count,
           exchangeCount: exchanges.count,
-          transactionCount: transactions.count
+          transactionCount: transactions.count,
+          budgetCount: budgets.count
         };
       }, LEDGER_TRANSACTION_OPTIONS);
 

@@ -19,6 +19,9 @@ try {
     if (!existing.length) {
       const [statement] = await prisma.$queryRaw`SELECT format('CREATE ROLE %I LOGIN PASSWORD %L NOSUPERUSER NOCREATEDB NOCREATEROLE NOREPLICATION NOBYPASSRLS', ${role}, ${password}) AS sql`;
       await prisma.$executeRawUnsafe(statement.sql);
+    } else {
+      const [statement] = await prisma.$queryRaw`SELECT format('ALTER ROLE %I LOGIN PASSWORD %L', ${role}, ${password}) AS sql`;
+      await prisma.$executeRawUnsafe(statement.sql);
     }
     const name = quote(role);
     await prisma.$executeRawUnsafe(`ALTER ROLE ${name} NOSUPERUSER NOCREATEDB NOCREATEROLE NOREPLICATION NOBYPASSRLS CONNECTION LIMIT ${pool + 5}`);

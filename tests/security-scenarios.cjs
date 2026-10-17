@@ -23,6 +23,33 @@ module.exports = async ({ t, prisma }) => {
     const body = await response.json(); return new URLSearchParams(new URL(body.url).hash.slice(1)).get('token');
   };
   try {
+    await t.test('legacy long passwords can log in, upgrade hashes and authenticate again', async () => {
+      for (const length of [129, 4097]) {
+        const longPassword = 'p'.repeat(length);
+        const salt = 'legacy-long-password';
+        const legacyHash = `${salt}:${crypto.scryptSync(longPassword, salt, 64).toString('hex')}`;
+        const legacyUser = await prisma.userAllowlist.create({ data: {
+          displayName: 'Legacy password', email: `long-${length}@example.test`, status: 'ACTIVE', passwordHash: legacyHash
+        } });
+        try {
+          const login = () => loginApi.POST(request('/api/auth/login', { email: legacyUser.email, password: longPassword }));
+          const response = await login();
+          assert.equal(response.status, 200, await response.clone().text());
+          const cookie = response.headers.get('set-cookie').match(/(?:^|,\s*)session=([a-f0-9]{64})/)[1];
+          assert.equal((await auth.getActiveUserBySessionToken(cookie)).id, legacyUser.id);
+          const stored = await prisma.userAllowlist.findUniqueOrThrow({ where: { id: legacyUser.id } });
+          assert(auth.isCurrentPasswordHash(stored.passwordHash));
+          assert.equal(await auth.verifyPassword(longPassword, stored.passwordHash), true);
+          assert.equal((await login()).status, 200);
+          assert.equal((await loginApi.POST(request('/api/auth/login', {
+            email: legacyUser.email, password: `${longPassword}wrong`
+          }))).status, 401);
+        } finally {
+          await prisma.session.deleteMany({ where: { userId: legacyUser.id } });
+          await prisma.userAllowlist.delete({ where: { id: legacyUser.id } });
+        }
+      }
+    });
     await t.test('real admin password change revokes existing sessions and stale login credentials', async () => {
       const session = await auth.createSession(user.id, user.passwordHash);
       assert(session);

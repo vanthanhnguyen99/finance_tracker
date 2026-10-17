@@ -185,7 +185,16 @@ test('PostgreSQL ledger regressions (requires a disposable migrated test databas
     for (const first of ['expense', 'clear']) {
       await t.test(`${scope} admin mutation serializes with a ${first}-first cash expense`, async () => {
         await reset(); await income(100);
+        await prisma.budget.deleteMany();
         const otherUser = await prisma.userAllowlist.findFirst({ where: { id: { not: user.id } } });
+        for (const userId of [user.id, otherUser.id]) {
+          await prisma.budget.create({ data: {
+            userId, month: '2026-10', currency: 'DKK', scope: 'TOTAL', scopeKey: 'TOTAL', limitMinor: 10000
+          } });
+          await prisma.budget.create({ data: {
+            userId, month: '2026-09', currency: 'VND', scope: 'CATEGORY', category: 'Food', scopeKey: 'CATEGORY:Food', limitMinor: 500000
+          } });
+        }
         const dkk = await wallet.getWalletByCurrency('DKK');
         await prisma.transaction.create({ data: {
           userId: otherUser.id, walletId: dkk.id, currency: 'DKK', type: 'INCOME', amount: 1000
@@ -258,7 +267,11 @@ test('PostgreSQL ledger regressions (requires a disposable migrated test databas
           const responses = await Promise.all(pending);
           const expenseResponse = responses[first === 'expense' ? 0 : 1];
           const clearResponse = responses[first === 'clear' ? 0 : 1];
-          assert.equal(clearResponse.status, 200, await clearResponse.text());
+          assert.equal(clearResponse.status, 200, await clearResponse.clone().text());
+          const clearResult = await clearResponse.json();
+          assert.equal(await prisma.budget.count({ where: { userId: user.id } }), scope === 'restore' ? 2 : 0);
+          assert.equal(await prisma.budget.count({ where: { userId: otherUser.id } }), scope === 'system' ? 0 : 2);
+          assert.equal(clearResult.budgetCount, scope === 'user' ? 2 : 4);
           const balance = (await wallet.getWalletBalances(user.id)).balances.DKK;
           assert.equal(observed, 'blocked on lock', `Final DKK balance: ${balance}`);
           assert.equal(expenseResponse.status, first === 'expense' || scope === 'restore' ? 200 : 400);
@@ -295,4 +308,5 @@ test('PostgreSQL ledger regressions (requires a disposable migrated test databas
   });
   await require('./finance-scenarios.cjs')({ t, prisma, user });
   await require('./security-scenarios.cjs')({ t, prisma });
+  await require('./runtime-role-scenarios.cjs')({ t, prisma });
 });

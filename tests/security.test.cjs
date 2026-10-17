@@ -36,6 +36,26 @@ test('password derivation remains compatible without synchronous event-loop hash
   assert.equal(await verifyPassword('legacy', legacy), true);
 });
 
+test('new passwords remain limited to 128 characters at registration and recovery', async () => {
+  let created = 0;
+  const load = createLoader({
+    '@/lib/db': { prisma: { userAllowlist: { create: async () => { created++; } } } },
+    '@/lib/auth': { hashPassword: async () => 'test-hash' }
+  });
+  const register = load('app/api/auth/register/route.ts');
+  const recovery = load('app/api/auth/reset-password/route.ts');
+  assert.equal((await register.POST(request('/api/auth/register', {
+    displayName: 'Boundary', email: 'boundary@example.test', password: 'p'.repeat(128)
+  }))).status, 200);
+  assert.equal((await register.POST(request('/api/auth/register', {
+    displayName: 'Boundary', email: 'boundary@example.test', password: 'p'.repeat(129)
+  }))).status, 400);
+  assert.equal(created, 1);
+  assert.equal((await recovery.POST(request('/api/auth/reset-password', {
+    token: 'a'.repeat(64), newPassword: 'p'.repeat(129)
+  }))).status, 400);
+});
+
 test('Origin checks ignore forged proxy hosts and fail closed without Origin', async () => {
   const { withApiSecurity } = createLoader()('lib/http-security.ts');
   let called = 0;

@@ -9,7 +9,7 @@ async function handlePOST(req: NextRequest) {
   const displayName = typeof body.displayName === "string" ? body.displayName.trim() : "";
   const email = typeof body.email === "string" ? body.email.trim().toLowerCase() : "";
   const password = typeof body.password === "string" ? body.password : "";
-  if (!displayName || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email) || password.length < 12)
+  if (!displayName || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email) || password.length < 12 || password.length > 128)
     return NextResponse.json({ error: "Tên, email hợp lệ và mật khẩu từ 12 đến 128 ký tự là bắt buộc." }, { status: 400 });
   requireClientRateLimit(req, "register", 10, 15 * 60 * 1000);
   const passwordHash = await hashPassword(password);
