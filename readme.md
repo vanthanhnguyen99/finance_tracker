@@ -344,6 +344,10 @@ không chứa token khôi phục; tài khoản cần đăng nhập lại sau res
   - `POST /api/system/restore`
   - `POST /api/system/clear-user-data`
   - `POST /api/users/:id/clear-data`
+- Export JSON chỉ thành công khi request restore tương ứng không vượt **10 MiB**
+  (tính byte UTF-8 và cả `{ mode: "replace", backup }` do giao diện gửi).
+  Backup vượt ngưỡng trả HTTP 413, không tạo file JSON không thể restore.
+  Với dữ liệu lớn, dùng PostgreSQL `pg_dump`/`pg_restore` thay cho JSON admin.
 - Phạm vi dữ liệu trong backup hệ thống:
   - `wallets`
   - `users` (gồm `displayName`, `email`, `status`, `note`, `passwordHash`, timestamps)

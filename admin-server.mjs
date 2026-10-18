@@ -913,7 +913,7 @@ async function handleAdminRequest(req, res, prisma) {
         { isolationLevel: "RepeatableRead", timeout: 30000 }
       );
 
-      sendJson(res, 200, {
+      const backup = {
         version: 2,
         scope: "system",
         source: "finance-tracker-admin",
@@ -986,7 +986,17 @@ async function handleAdminRequest(req, res, prisma) {
           exchangeCount: exchanges.length,
           budgetCount: budgets.length
         }
-      });
+      };
+      // The restore picker wraps the parsed download in this compact request.
+      // Reserve its bytes too; replace is one byte longer than append.
+      const restoreBytes = Buffer.byteLength(JSON.stringify({ mode: "replace", backup }), "utf8");
+      if (restoreBytes > ADMIN_BODY_LIMIT_BYTES) {
+        sendJson(res, 413, {
+          error: "Backup JSON vượt giới hạn restore 10 MiB. Dùng pg_dump/pg_restore của PostgreSQL để sao lưu và khôi phục dữ liệu lớn."
+        });
+        return;
+      }
+      sendJson(res, 200, backup);
       return;
     }
 

@@ -97,6 +97,13 @@ reset requests. Financial records are preserved. Application backup restore neve
 reactivates sessions; recovery tokens are intentionally excluded from JSON backup.
 Protect system JSON/dumps because they contain personal data and password hashes.
 
+Admin JSON backup export and restore share a 10 MiB request limit. Export checks
+UTF-8 bytes including the compact `{ mode: "replace", backup }` restore envelope
+used by the file picker (append is smaller). Oversized exports return HTTP 413
+with an error instead of a backup that cannot be restored. For larger datasets,
+use PostgreSQL `pg_dump`/`pg_restore`; these dumps cannot be imported by the JSON
+picker. Stop writers and retain a fresh dump before replacing database data.
+
 ## Tests and dependency maintenance
 
 `npm test`, `npm run lint`, `npm run build`, `npm audit` and
