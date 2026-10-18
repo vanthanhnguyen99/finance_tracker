@@ -201,6 +201,10 @@ test("filter accordion, CSV and dialog focus are accessible", async ({ page }) =
 test("budget form uses a themed dialog and persists a decimal limit", async ({ page }) => {
   await page.goto("/budgets"); await page.getByRole("button", { name: /Thêm ngân sách/ }).click();
   const dialog = page.getByRole("dialog"); await expect(dialog).toBeVisible();
+  await dialog.getByLabel("Phạm vi", { exact: true }).selectOption("CATEGORY");
+  const categories = dialog.getByRole("combobox", { name: "Danh mục", exact: true });
+  await expect(categories.getByRole("option", { name: "Đi chợ", exact: true })).toHaveCount(1);
+  await expect(categories.getByRole("option", { name: "Lương", exact: true })).toHaveCount(0);
   await dialog.getByLabel("Phạm vi", { exact: true }).selectOption("UNCATEGORIZED");
   await dialog.locator('[name="limitMajor"]').fill("123,45"); await audit(page);
   await dialog.getByRole("button", { name: "Lưu hạn mức" }).click();

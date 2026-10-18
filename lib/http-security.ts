@@ -12,7 +12,7 @@ const bodies = new WeakMap<Request, Record<string, unknown>>();
 export function allowedOrigins() {
   const configured = process.env.APP_ORIGINS;
   if (configured) return new Set(configured.split(",").map(value => new URL(value.trim()).origin));
-  return new Set(process.env.NODE_ENV === "production" ? [] : ["http://localhost", "http://127.0.0.1:3107"]);
+  return new Set(process.env.NODE_ENV === "production" ? [] : ["http://localhost", "http://localhost:3000", "http://127.0.0.1:3000", "http://127.0.0.1:3107"]);
 }
 
 export function isSameOriginMutation(req: Request) {

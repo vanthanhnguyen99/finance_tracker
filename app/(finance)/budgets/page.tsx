@@ -19,7 +19,7 @@ export default async function Budgets({ searchParams }: { searchParams: Promise<
     try {
       const month = parseMonth(params.month ?? currentMonth(timeZone));
       const currency = parseCurrency(params.currency ?? user.primaryCurrency);
-      const [budgets, categories] = await Promise.all([getBudgets(user.id, month, currency, timeZone), getUserCategories(user.id)]);
+      const [budgets, categories] = await Promise.all([getBudgets(user.id, month, currency, timeZone), getUserCategories(user.id, "EXPENSE")]);
       return { month, currency, budgets, categories };
     } catch (error) {
       if (!(error instanceof FinanceInputError)) throw error;

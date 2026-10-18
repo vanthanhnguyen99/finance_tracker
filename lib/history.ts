@@ -338,15 +338,16 @@ export async function getHistoryRows(userId: string, filters: HistoryFilters) {
     Prisma.sql`${historyCte(userId, filters)} SELECT * FROM filtered ORDER BY "createdAt" DESC, source DESC, id DESC LIMIT 10001`,
   );
 }
-export async function getUserCategories(userId: string) {
+export async function getUserCategories(userId: string, type?: "INCOME" | "EXPENSE") {
   const rows = await prisma.$queryRaw<{ category: string }[]>(Prisma.sql`
     SELECT DISTINCT "category" FROM "Transaction"
     WHERE "userId" = ${userId} AND "category" IS NOT NULL
-      AND "category" !~ '^[[:space:]]*$'`);
+      AND "category" !~ '^[[:space:]]*$'
+      ${type ? Prisma.sql`AND "type" = ${type}::"TransactionType"` : Prisma.empty}`);
   return [
     ...new Set([
-      ...INCOME_CATEGORIES,
-      ...EXPENSE_CATEGORIES,
+      ...(type === "EXPENSE" ? [] : INCOME_CATEGORIES),
+      ...(type === "INCOME" ? [] : EXPENSE_CATEGORIES),
       ...rows.flatMap((r) => (r.category?.trim() ? [r.category] : [])),
     ]),
   ].sort((a, b) => a.localeCompare(b, "vi"));

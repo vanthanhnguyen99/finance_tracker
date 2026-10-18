@@ -68,6 +68,35 @@ test('Origin checks ignore forged proxy hosts and fail closed without Origin', a
   assert.equal((await post(request('/api/test', {}))).status, 200);
 });
 
+test('default development origins accept local mutations while production requires explicit origins', async () => {
+  const previous = { NODE_ENV: process.env.NODE_ENV, APP_ORIGINS: process.env.APP_ORIGINS };
+  try {
+    delete process.env.APP_ORIGINS;
+    process.env.NODE_ENV = 'development';
+    const { withApiSecurity } = createLoader()('lib/http-security.ts');
+    const post = withApiSecurity(async () => new Response('{}'));
+    for (const origin of ['http://localhost:3000', 'http://127.0.0.1:3000', 'http://localhost', 'http://127.0.0.1:3107']) {
+      assert.equal((await post(request('/api/test', {}, { Origin: origin }))).status, 200, origin);
+    }
+    for (const origin of ['https://evil.example', 'http://localhost:9999', 'http://localhost.evil.example:3000']) {
+      assert.equal((await post(request('/api/test', {}, { Origin: origin }))).status, 403, origin);
+    }
+    process.env.NODE_ENV = 'production';
+    assert.equal((await post(request('/api/test', {}, { Origin: 'http://localhost:3000' }))).status, 403);
+    for (const mode of ['development', 'production']) {
+      process.env.NODE_ENV = mode;
+      process.env.APP_ORIGINS = 'https://finance.example';
+      assert.equal((await post(request('/api/test', {}, { Origin: 'https://finance.example' }))).status, 200);
+      assert.equal((await post(request('/api/test', {}, { Origin: 'http://localhost:3000' }))).status, 403);
+    }
+  } finally {
+    for (const [key, value] of Object.entries(previous)) {
+      if (value === undefined) delete process.env[key];
+      else process.env[key] = value;
+    }
+  }
+});
+
 test('JSON reading enforces actual streamed bytes and validates malformed bodies', async () => {
   const { readJsonBody, withApiSecurity } = createLoader()('lib/http-security.ts');
   let called = false;

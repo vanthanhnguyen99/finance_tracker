@@ -78,6 +78,28 @@ module.exports = async function ({ t, prisma, user }) {
       }),
     );
 
+  await t.test('budget categories include only expense defaults and the current user\'s expense categories', async () => {
+    await reset();
+    await transaction({ type: 'INCOME', category: 'Thu nhập riêng' });
+    await transaction({ category: 'Chi tiêu riêng' });
+    await transaction({ category: 'Dùng chung' });
+    await transaction({ type: 'INCOME', category: 'Dùng chung' });
+    await transaction({ category: 'Đi chợ' });
+    await transaction({ category: '   ' });
+    await transaction({ category: null });
+    const other = await prisma.userAllowlist.create({ data: { displayName: 'Category isolation', status: 'ACTIVE' } });
+    await transaction({ userId: other.id, category: 'Chi tiêu người khác' });
+    const { EXPENSE_CATEGORIES, INCOME_CATEGORIES } = load('lib/categories.ts');
+    const expected = [...EXPENSE_CATEGORIES, 'Chi tiêu riêng', 'Dùng chung'].sort((a, b) => a.localeCompare(b, 'vi'));
+    assert.deepEqual(await history.getUserCategories(user.id, 'EXPENSE'), expected);
+    const all = await history.getUserCategories(user.id);
+    for (const category of [...expected, ...INCOME_CATEGORIES, 'Thu nhập riêng']) assert(all.includes(category), category);
+    assert(!all.includes('Chi tiêu người khác'));
+    // A category name used for income is still valid once used in an expense.
+    await transaction({ category: 'Lương' });
+    assert((await history.getUserCategories(user.id, 'EXPENSE')).includes('Lương'));
+  });
+
   await t.test(
     "history paginates 65 interleaved tied records with global totals and full CSV",
     async () => {
