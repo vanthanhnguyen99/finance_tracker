@@ -7,28 +7,39 @@
     "dev": "next dev",
     "build": "prisma generate && next build",
     "start": "next start",
-    "lint": "next lint",
+    "lint": "eslint app lib middleware.ts tests/ui playwright.config.ts",
     "prisma:generate": "prisma generate",
     "prisma:migrate": "prisma migrate dev",
     "prisma:studio": "prisma studio",
     "test": "node --test tests/*.test.cjs",
-    "test:integration": "node --test tests/*.integration.cjs"
+    "test:integration": "node --test tests/*.integration.cjs",
+    "test:ui": "playwright test",
+    "test:ui:seed": "node tests/ui-fixtures.cjs"
   },
   "dependencies": {
     "@prisma/client": "^5.22.0",
     "clsx": "^2.1.1",
-    "next": "^16.1.6",
-    "react": "^19.2.4",
-    "react-dom": "^19.2.4"
+    "next": "^16.4.2",
+    "react": "^19.3.1",
+    "react-dom": "^19.3.1"
   },
   "devDependencies": {
+    "@axe-core/playwright": "^4.14.0",
+    "@playwright/test": "^1.64.1",
     "@types/node": "^20.14.9",
     "@types/react": "^18.3.3",
     "@types/react-dom": "^18.3.0",
     "autoprefixer": "^10.4.24",
+    "eslint": "^9.39.5",
+    "eslint-config-next": "^16.4.2",
+    "fill-range": "^7.1.1",
     "postcss": "^8.5.6",
     "prisma": "^5.22.0",
     "tailwindcss": "^3.4.7",
     "typescript": "^5.5.4"
+  },
+  "overrides": {
+    "braces": "file:./vendor/braces",
+    "postcss-selector-parser": "^7.1.6"
   }
 }

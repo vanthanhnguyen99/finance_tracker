@@ -80,7 +80,7 @@ export default function LoginPage() {
             </Link>
           </div>
           <button className="button" type="submit">Đăng nhập</button>
-          {message ? <div role="alert" className="alert border-red-200 bg-danger-light text-danger-dark">{message}</div> : null}
+          {message ? <div role="alert" className="alert border-danger/20 bg-danger-light text-danger-dark">{message}</div> : null}
         </form>
 
         <div className="mt-6 border-t border-slate-100 pt-5 text-center text-sm text-slate-500">

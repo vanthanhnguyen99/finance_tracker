@@ -26,6 +26,10 @@ function writeStorage(key: string, value: string) {
   }
 }
 
+export function getFinanceDataVersion() {
+  return readStorage(DATA_VERSION_KEY) ?? memoryVersion ?? "initial";
+}
+
 export function markFinanceDataChanged() {
   const version = `${Date.now()}-${Math.random().toString(36).slice(2)}`;
   memoryVersion = version;
@@ -38,7 +42,7 @@ export function DataRefreshSync() {
   const router = useRouter();
 
   useEffect(() => {
-    if (pathname !== "/" && pathname !== "/history") return;
+    if (pathname !== "/" && pathname !== "/history" && pathname !== "/budgets") return;
 
     function refreshIfStale() {
       const version = readStorage(DATA_VERSION_KEY) ?? memoryVersion;

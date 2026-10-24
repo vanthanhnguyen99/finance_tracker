@@ -2,8 +2,9 @@
 
 import Link from "next/link";
 import { useState } from "react";
-import { useRouter } from "next/navigation";
 import { formatAmountForInput, formatMajorAmountForInput, normalizeAmountForApi } from "@/lib/money";
+import { EXPENSE_CATEGORIES, INCOME_CATEGORIES } from "@/lib/categories";
+import { markFinanceDataChanged } from "./DataRefreshSync";
 import { ChevronDownIcon, ExchangeIcon, ExpenseIcon, IncomeIcon, PlusIcon } from "./AppIcons";
 
 export type HistoryItem =
@@ -101,11 +102,15 @@ function paymentMethodLabel(value: "CASH" | "CREDIT_CARD" | null | undefined) {
   return value === "CREDIT_CARD" ? "Thẻ tín dụng" : "Tiền mặt";
 }
 
-export function HistoryList({ items, timeZone }: { items: HistoryItem[]; timeZone: string }) {
+export function HistoryList({ items, timeZone, filtered = false, onChanged }: { items: HistoryItem[]; timeZone: string; filtered?: boolean; onChanged?: () => void }) {
   const [openId, setOpenId] = useState<string | null>(null);
   const [editingId, setEditingId] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
-  const router = useRouter();
+  const [mutationError, setMutationError] = useState("");
+  function changed() {
+    setMutationError(""); setOpenId(null); setEditingId(null);
+    markFinanceDataChanged(); onChanged?.();
+  }
 
   function handleAmountInput(event: React.FormEvent<HTMLInputElement>) {
     const target = event.currentTarget;
@@ -128,8 +133,14 @@ export function HistoryList({ items, timeZone }: { items: HistoryItem[]; timeZon
   async function deleteItem(item: HistoryItem) {
     if (!confirm("Xoá giao dịch này?")) return;
     const endpoint = item.type === "EXCHANGE" ? `/api/exchange/${item.id}` : `/api/transactions/${item.id}`;
-    await fetch(endpoint, { method: "DELETE" });
-    router.refresh();
+    if (saving) return;
+    setSaving(true);
+    try {
+      const response = await fetch(endpoint, { method: "DELETE" });
+      if (!response.ok) { const payload = await response.json(); throw new Error(payload.error ?? "Không thể xóa giao dịch."); }
+      changed();
+    } catch (error) { setMutationError(error instanceof Error ? error.message : "Không thể xóa. Vui lòng kiểm tra kết nối."); }
+    finally { setSaving(false); }
   }
 
   async function saveEdit(item: Extract<HistoryItem, { type: "INCOME" | "EXPENSE" }>, form: HTMLFormElement) {
@@ -140,26 +151,29 @@ export function HistoryList({ items, timeZone }: { items: HistoryItem[]; timeZon
     const currency = data.get("currency");
     const paymentMethodRaw = data.get("paymentMethod");
     const paymentMethod = typeof paymentMethodRaw === "string" ? paymentMethodRaw : undefined;
+    if (saving) return;
     setSaving(true);
-    const res = await fetch(`/api/transactions/${item.id}`, {
-      method: "PATCH",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        amountMajor,
-        note,
-        category,
-        currency,
-        ...(item.type === "EXPENSE" ? { paymentMethod } : {})
-      })
-    });
-    setSaving(false);
-    if (!res.ok) {
-      const payload = await res.json();
-      alert(payload.error ?? "Cập nhật thất bại");
-      return;
-    }
-    setEditingId(null);
-    router.refresh();
+    setMutationError("");
+    try {
+      const res = await fetch(`/api/transactions/${item.id}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          amountMajor,
+          note,
+          category,
+          currency,
+          ...(item.type === "EXPENSE" ? { paymentMethod } : {})
+        })
+      });
+      if (!res.ok) {
+        const payload = await res.json();
+        throw new Error(payload.error ?? "Cập nhật thất bại");
+      }
+      setEditingId(null);
+      changed();
+    } catch (error) { setMutationError(error instanceof Error ? error.message : "Không thể lưu. Vui lòng kiểm tra kết nối."); }
+    finally { setSaving(false); }
   }
 
   async function saveExchangeEdit(item: Extract<HistoryItem, { type: "EXCHANGE" }>, form: HTMLFormElement) {
@@ -167,25 +181,28 @@ export function HistoryList({ items, timeZone }: { items: HistoryItem[]; timeZon
     const fromAmountDkk = normalizeAmount(data.get("fromAmountDkk"));
     const toAmountVnd = normalizeAmount(data.get("toAmountVnd"));
     const feeAmount = normalizeAmount(data.get("feeAmount"));
+    if (saving) return;
     setSaving(true);
-    const res = await fetch(`/api/exchange/${item.id}`, {
-      method: "PATCH",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        fromAmountDkk,
-        toAmountVnd,
-        feeAmount: feeAmount || "0",
-        feeCurrency: data.get("feeCurrency")
-      })
-    });
-    setSaving(false);
-    if (!res.ok) {
-      const payload = await res.json();
-      alert(payload.error ?? "Cập nhật thất bại");
-      return;
-    }
-    setEditingId(null);
-    router.refresh();
+    setMutationError("");
+    try {
+      const res = await fetch(`/api/exchange/${item.id}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          fromAmountDkk,
+          toAmountVnd,
+          feeAmount: feeAmount || "0",
+          feeCurrency: data.get("feeCurrency")
+        })
+      });
+      if (!res.ok) {
+        const payload = await res.json();
+        throw new Error(payload.error ?? "Cập nhật thất bại");
+      }
+      setEditingId(null);
+      changed();
+    } catch (error) { setMutationError(error instanceof Error ? error.message : "Không thể lưu. Vui lòng kiểm tra kết nối."); }
+    finally { setSaving(false); }
   }
 
   const groupedItems = items.reduce<
@@ -210,14 +227,15 @@ export function HistoryList({ items, timeZone }: { items: HistoryItem[]; timeZon
         </div>
       </div>
 
+      {mutationError && <p role="alert" className="alert mb-3 border-danger/20 text-danger-dark">{mutationError}</p>}
       {items.length === 0 ? (
         <div className="empty-state">
           <span className="mb-4 inline-flex h-12 w-12 items-center justify-center rounded-full bg-primary-50 text-primary-600">
             <ExchangeIcon className="h-6 w-6" />
           </span>
-          <h3 className="text-lg font-semibold text-ink">Chưa có giao dịch</h3>
+          <h3 className="text-lg font-semibold text-ink">{filtered ? "Không có kết quả" : "Chưa có giao dịch"}</h3>
           <p className="mt-1 max-w-sm text-sm leading-5 text-slate-500">
-            Thêm giao dịch đầu tiên để bắt đầu theo dõi dòng tiền.
+            {filtered ? "Thử đổi từ khóa hoặc bỏ bớt bộ lọc." : "Thêm giao dịch đầu tiên để bắt đầu theo dõi dòng tiền."}
           </p>
           <Link href="/add" className="primary-pill mt-5">
             <PlusIcon className="h-5 w-5" />
@@ -225,13 +243,14 @@ export function HistoryList({ items, timeZone }: { items: HistoryItem[]; timeZon
           </Link>
         </div>
       ) : (
-        <div className="grid gap-6">
+        <div className="grid min-w-0 grid-cols-1 gap-6">
           {groupedItems.map((group) => (
             <div key={group.key}>
               <h3 className="mb-2 text-sm font-semibold capitalize text-slate-600">{group.label}</h3>
-              <div className="overflow-hidden rounded-card border border-slate-200 bg-white shadow-soft">
+              <div className="history-group overflow-hidden rounded-card border border-slate-200 bg-surface shadow-soft">
                 {group.items.map((item, index) => {
-                  const isOpen = openId === item.id;
+                  const itemKey = `${item.type}:${item.id}`;
+                  const isOpen = openId === itemKey;
                   const ItemIcon = item.type === "INCOME" ? IncomeIcon : item.type === "EXPENSE" ? ExpenseIcon : ExchangeIcon;
                   const iconTone =
                     item.type === "INCOME"
@@ -247,25 +266,25 @@ export function HistoryList({ items, timeZone }: { items: HistoryItem[]; timeZon
                         : "text-primary-700";
 
                   return (
-                    <div key={item.id} className={index > 0 ? "border-t border-slate-100" : ""}>
+                    <div key={itemKey} data-history-key={itemKey} className={index > 0 ? "border-t border-slate-100" : ""}>
                       <button
                         type="button"
-                        onClick={() => setOpenId(isOpen ? null : item.id)}
-                        className="flex min-h-20 w-full items-center gap-3 px-4 py-3 text-left transition active:bg-slate-50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-primary-300"
+                        onClick={() => setOpenId(isOpen ? null : itemKey)}
+                        className="history-row flex min-h-20 w-full items-center gap-3 px-4 py-3 text-left transition active:bg-slate-50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-primary-300"
                         aria-expanded={isOpen}
-                        aria-controls={`transaction-${item.id}`}
+                        aria-controls={`transaction-${itemKey}`}
                       >
                         <span className={`inline-flex h-10 w-10 shrink-0 items-center justify-center rounded-xl ${iconTone}`}>
                           <ItemIcon className="h-5 w-5" />
                         </span>
-                        <span className="min-w-0 flex-1">
+                        <span className="history-row-summary min-w-0 flex-1">
                           <span className="block truncate text-sm font-semibold text-ink">{itemTitle(item)}</span>
                           <span className="mt-0.5 block truncate text-xs text-slate-500">
                             {itemTypeLabel(item)} · {formatTime(item.createdAt, timeZone)}
                           </span>
                         </span>
-                        <span className="flex max-w-[46%] shrink-0 items-center gap-1.5 text-right">
-                          <span className={`money-value break-words text-sm font-semibold leading-5 ${amountTone}`}>
+                        <span className="history-row-amount flex min-w-0 max-w-[46%] shrink-0 items-center gap-1.5 text-right">
+                          <span className={`money-value min-w-0 break-words text-sm font-semibold leading-5 ${amountTone}`}>
                             {displayAmount(item)}
                           </span>
                           <ChevronDownIcon className={`h-4 w-4 shrink-0 text-slate-400 transition ${isOpen ? "rotate-180" : ""}`} />
@@ -273,8 +292,8 @@ export function HistoryList({ items, timeZone }: { items: HistoryItem[]; timeZon
                       </button>
 
                       {isOpen ? (
-                        <div id={`transaction-${item.id}`} className="border-t border-slate-100 bg-slate-50 px-4 py-4">
-                          {editingId === item.id ? (
+                        <div id={`transaction-${itemKey}`} className="border-t border-slate-100 bg-slate-50 px-4 py-4">
+                          {editingId === itemKey ? (
                             <form
                               className="grid gap-4"
                               onSubmit={(event) => {
@@ -361,6 +380,7 @@ export function HistoryList({ items, timeZone }: { items: HistoryItem[]; timeZon
                                     {item.type === "EXPENSE" ? (
                                       <select className="select" name="category" defaultValue={item.category ?? ""}>
                                         <option value="">Chọn danh mục</option>
+                                        {item.category && !EXPENSE_CATEGORIES.includes(item.category) && <option value={item.category}>{item.category}</option>}
                                         <option value="Tiền thuê nhà">Tiền thuê nhà</option>
                                         <option value="Đi chợ">Đi chợ</option>
                                         <option value="Tiền mừng">Tiền mừng</option>
@@ -373,6 +393,7 @@ export function HistoryList({ items, timeZone }: { items: HistoryItem[]; timeZon
                                     ) : (
                                       <select className="select" name="category" defaultValue={item.category ?? ""}>
                                         <option value="">Chọn danh mục</option>
+                                        {item.category && !INCOME_CATEGORIES.includes(item.category) && <option value={item.category}>{item.category}</option>}
                                         <option value="Lương">Lương</option>
                                         <option value="Người eo gửi">Người eo gửi</option>
                                         <option value="Người vay gửi">Người vay gửi</option>
@@ -442,10 +463,10 @@ export function HistoryList({ items, timeZone }: { items: HistoryItem[]; timeZon
                                 ) : null}
                               </dl>
                               <div className="mt-4 grid grid-cols-2 gap-2">
-                                <button className="button button-secondary" type="button" onClick={() => setEditingId(item.id)}>
+                                <button className="button button-secondary" type="button" onClick={() => setEditingId(itemKey)}>
                                   Sửa
                                 </button>
-                                <button className="button button-ghost text-danger-dark" type="button" onClick={() => deleteItem(item)}>
+                                <button className="button button-ghost text-danger-dark" type="button" disabled={saving} onClick={() => deleteItem(item)}>
                                   Xóa
                                 </button>
                               </div>

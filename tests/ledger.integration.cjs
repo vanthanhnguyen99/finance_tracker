@@ -1,3 +1,4 @@
+process.env.APP_ORIGINS = 'http://localhost';
 const { test } = require('node:test');
 const assert = require('node:assert/strict');
 const { createLoader } = require('./load-ts.cjs');
@@ -13,6 +14,7 @@ test('PostgreSQL ledger regressions (requires a disposable migrated test databas
   const load = createLoader({ '@/lib/auth': { getApiSessionUser: async () => user }, 'next/cache': { revalidatePath() {} } });
   const { prisma } = load('lib/db.ts');
   t.after(() => prisma.$disconnect());
+  await prisma.budget.deleteMany();
   await prisma.session.deleteMany();
   await prisma.passwordResetRequest.deleteMany();
   await prisma.exchange.deleteMany();
@@ -25,7 +27,7 @@ test('PostgreSQL ledger regressions (requires a disposable migrated test databas
   const exchangeEdit = load('app/api/exchange/[id]/route.ts');
   const wallet = load('lib/wallet.ts');
   const request = (data, method = 'POST') => new NextRequest('http://localhost/api/test', {
-    method, headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(data)
+    method, headers: { 'Content-Type': 'application/json', Origin: 'http://localhost' }, body: JSON.stringify(data)
   });
   const context = id => ({ params: Promise.resolve({ id }) });
   const income = async (amountMajor, currency = 'DKK') => {
@@ -156,7 +158,7 @@ test('PostgreSQL ledger regressions (requires a disposable migrated test databas
     let finishWrite;
     const writeDone = new Promise(resolve => { finishWrite = resolve; });
     const adapter = { $transaction: (action, options) => prisma.$transaction(tx => action({
-      wallet: tx.wallet, passwordResetRequest: tx.passwordResetRequest, transaction: tx.transaction, exchange: tx.exchange,
+      wallet: tx.wallet, passwordResetRequest: tx.passwordResetRequest, transaction: tx.transaction, exchange: tx.exchange, budget: tx.budget,
       userAllowlist: { findMany: async args => {
         const rows = await tx.userAllowlist.findMany(args);
         try {
@@ -183,7 +185,16 @@ test('PostgreSQL ledger regressions (requires a disposable migrated test databas
     for (const first of ['expense', 'clear']) {
       await t.test(`${scope} admin mutation serializes with a ${first}-first cash expense`, async () => {
         await reset(); await income(100);
+        await prisma.budget.deleteMany();
         const otherUser = await prisma.userAllowlist.findFirst({ where: { id: { not: user.id } } });
+        for (const userId of [user.id, otherUser.id]) {
+          await prisma.budget.create({ data: {
+            userId, month: '2026-10', currency: 'DKK', scope: 'TOTAL', scopeKey: 'TOTAL', limitMinor: 10000
+          } });
+          await prisma.budget.create({ data: {
+            userId, month: '2026-09', currency: 'VND', scope: 'CATEGORY', category: 'Food', scopeKey: 'CATEGORY:Food', limitMinor: 500000
+          } });
+        }
         const dkk = await wallet.getWalletByCurrency('DKK');
         await prisma.transaction.create({ data: {
           userId: otherUser.id, walletId: dkk.id, currency: 'DKK', type: 'INCOME', amount: 1000
@@ -224,7 +235,7 @@ test('PostgreSQL ledger regressions (requires a disposable migrated test databas
         const server = createAdminServer(adminDb);
         await new Promise(resolve => server.listen(0, '127.0.0.1', resolve));
         const base = `http://127.0.0.1:${server.address().port}`;
-        const headers = { 'X-Admin-Token': process.env.ADMIN_TOKEN, 'Content-Type': 'application/json' };
+        const headers = { 'X-Admin-Token': process.env.ADMIN_TOKEN, 'Content-Type': 'application/json', Origin: 'http://localhost' };
         const backup = scope === 'restore' ? await (await fetch(`${base}/api/system/backup`, { headers })).json() : undefined;
         const endpoint = scope === 'user' ? `/api/users/${user.id}/clear-data` :
           scope === 'restore' ? '/api/system/restore' : '/api/system/clear-user-data';
@@ -256,13 +267,18 @@ test('PostgreSQL ledger regressions (requires a disposable migrated test databas
           const responses = await Promise.all(pending);
           const expenseResponse = responses[first === 'expense' ? 0 : 1];
           const clearResponse = responses[first === 'clear' ? 0 : 1];
-          assert.equal(clearResponse.status, 200, await clearResponse.text());
+          assert.equal(clearResponse.status, 200, await clearResponse.clone().text());
+          const clearResult = await clearResponse.json();
+          assert.equal(await prisma.budget.count({ where: { userId: user.id } }), scope === 'restore' ? 2 : 0);
+          assert.equal(await prisma.budget.count({ where: { userId: otherUser.id } }), scope === 'system' ? 0 : 2);
+          assert.equal(clearResult.budgetCount, scope === 'user' ? 2 : 4);
           const balance = (await wallet.getWalletBalances(user.id)).balances.DKK;
           assert.equal(observed, 'blocked on lock', `Final DKK balance: ${balance}`);
           assert.equal(expenseResponse.status, first === 'expense' || scope === 'restore' ? 200 : 400);
           assert.equal(balance, scope === 'restore' ? (first === 'expense' ? 10000 : 2000) : 0);
           assert.equal((await wallet.getWalletBalances(otherUser.id)).balances.DKK, scope === 'system' ? 0 : 1000);
-          assert(await prisma.session.findUnique({ where: { id: session.id } }), 'Existing sessions are preserved');
+          if (scope === 'restore') assert.equal(await prisma.session.findUnique({ where: { id: session.id } }), null, 'Restore must not reactivate sessions');
+          else assert(await prisma.session.findUnique({ where: { id: session.id } }), 'Existing sessions are preserved');
         } finally {
           releaseFirst();
           await Promise.allSettled(pending);
@@ -279,7 +295,7 @@ test('PostgreSQL ledger regressions (requires a disposable migrated test databas
     await new Promise(resolve => server.listen(0, '127.0.0.1', resolve));
     try {
       const base = `http://127.0.0.1:${server.address().port}`;
-      const headers = { 'Content-Type': 'application/json', 'X-Admin-Token': process.env.ADMIN_TOKEN };
+      const headers = { 'Content-Type': 'application/json', Origin: 'http://localhost', 'X-Admin-Token': process.env.ADMIN_TOKEN };
       const backup = await (await fetch(`${base}/api/system/backup`, { headers })).json();
       const rejected = await fetch(`${base}/api/system/restore`, { method: 'POST', headers, body: JSON.stringify({ backup: { unrelated: 'json' } }) });
       assert.equal(rejected.status, 400);
@@ -290,4 +306,7 @@ test('PostgreSQL ledger regressions (requires a disposable migrated test databas
       assert.equal(await prisma.userAllowlist.count(), backup.users.length);
     } finally { await new Promise(resolve => { server.close(resolve); server.closeAllConnections(); }); }
   });
+  await require('./finance-scenarios.cjs')({ t, prisma, user });
+  await require('./security-scenarios.cjs')({ t, prisma });
+  await require('./runtime-role-scenarios.cjs')({ t, prisma });
 });

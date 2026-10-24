@@ -9,47 +9,28 @@ const config: Config = {
   theme: {
     extend: {
       fontFamily: {
-        sans: ["Be Vietnam Pro", "sans-serif"]
+        sans: ["-apple-system", "BlinkMacSystemFont", "Segoe UI", "Arial", "sans-serif"]
       },
       colors: {
-        ink: "#171A1F",
-        mist: "#F8F9FB",
-        primary: {
-          50: "#EEF5FF",
-          100: "#D9E8FF",
-          200: "#B9D4FF",
-          300: "#8DB8FF",
-          400: "#5E93FF",
-          500: "#3B6FF5",
-          600: "#2F56D8",
-          700: "#2945AF",
-          800: "#273C8A",
-          900: "#26366D"
-        },
-        success: {
-          light: "#EAF8F0",
-          DEFAULT: "#2E9D62",
-          dark: "#217548"
-        },
-        danger: {
-          light: "#FDECEC",
-          DEFAULT: "#DC4C4C",
-          dark: "#A93434"
-        },
-        warning: {
-          light: "#FFF6E1",
-          DEFAULT: "#E59A24",
-          dark: "#A86B11"
-        }
+        ink: "rgb(var(--text-primary) / <alpha-value>)",
+        mist: "rgb(var(--app-bg) / <alpha-value>)",
+        surface: "rgb(var(--surface-solid) / <alpha-value>)",
+        "on-accent": "rgb(var(--text-on-accent) / <alpha-value>)",
+        slate: Object.fromEntries([50,100,200,300,400,500,600,700,800,900,950].map(n => [n, `rgb(var(--neutral-${n}) / <alpha-value>)`])),
+        primary: Object.fromEntries([50,100,200,300,400,500,600,700,800,900].map(n => [n, `rgb(var(--accent-${n}) / <alpha-value>)`])),
+        success: { light: "rgb(var(--positive-bg) / <alpha-value>)", DEFAULT: "rgb(var(--income) / <alpha-value>)", dark: "rgb(var(--income-text) / <alpha-value>)" },
+        danger: { light: "rgb(var(--negative-bg) / <alpha-value>)", DEFAULT: "rgb(var(--expense) / <alpha-value>)", dark: "rgb(var(--expense-text) / <alpha-value>)" },
+        warning: { light: "rgb(var(--warning-bg) / <alpha-value>)", DEFAULT: "rgb(var(--warning) / <alpha-value>)", dark: "rgb(var(--warning-text) / <alpha-value>)" }
       },
+      transitionDuration: { 150: "var(--motion-fast)", 200: "var(--motion-base)", 300: "var(--motion-slow)" },
       borderRadius: {
-        card: "1rem",
-        control: "0.75rem"
+        card: "var(--radius-card)",
+        control: "var(--radius-control)"
       },
       boxShadow: {
-        soft: "0 1px 2px rgba(17, 24, 39, 0.06)",
-        card: "0 1px 2px rgba(17, 24, 39, 0.06)",
-        sheet: "0 12px 32px rgba(17, 24, 39, 0.16)"
+        soft: "var(--shadow-soft)",
+        card: "var(--shadow-soft)",
+        sheet: "var(--shadow-overlay)"
       }
     }
   },

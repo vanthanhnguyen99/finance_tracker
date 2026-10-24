@@ -1,10 +1,14 @@
+import { AppPage } from "../components/AppPage";
+import { currentMonth } from "@/lib/budget-utils";
+import { getBudgets } from "@/lib/budgets";
+import { BudgetCard } from "../components/BudgetCard";
 import { prisma } from "@/lib/db";
 import Link from "next/link";
 import { getPreviousRange, getPreviousRangeFromBounds, getRange, type TimeFilter } from "@/lib/date";
 import { getWalletBalances } from "@/lib/wallet";
 import { formatMoney } from "@/lib/money";
-import { ExpenseCurrencyToggle } from "./components/ExpenseCurrencyToggle";
-import { TimeFilterTabs } from "./components/TimeFilterTabs";
+import { ExpenseCurrencyToggle } from "../components/ExpenseCurrencyToggle";
+import { TimeFilterTabs } from "../components/TimeFilterTabs";
 import { unstable_noStore as noStore } from "next/cache";
 import { requireActivePageSession } from "@/lib/server-auth";
 import { cookies } from "next/headers";
@@ -17,8 +21,8 @@ import {
   IncomeIcon,
   PlusIcon,
   WalletIcon
-} from "./components/AppIcons";
-import { ProfileMenu } from "./components/ProfileMenu";
+} from "../components/AppIcons";
+import { ProfileMenu } from "../components/ProfileMenu";
 import {
   getDateInTimeZone,
   parseDateInputInTimeZone,
@@ -52,6 +56,8 @@ export default async function Dashboard({
   const primaryCurrency = user.primaryCurrency;
   const cookieStore = await cookies();
   const userTimeZone = resolveTimeZone(cookieStore.get(TIMEZONE_COOKIE_NAME)?.value);
+  const budgetMonth = currentMonth(userTimeZone);
+  const monthlyBudgetPromise = getBudgets(user.id, budgetMonth, primaryCurrency, userTimeZone, "TOTAL");
   const resolvedSearchParams = await searchParams;
   const filterParam = resolvedSearchParams.filter;
   const filter: TimeFilter =
@@ -193,7 +199,7 @@ export default async function Dashboard({
     return `${formatDateDash(rangeStart)}->${formatDateDash(rangeEnd)}`;
   };
 
-  const [trendTransactions, exchangeDkkEntries, balances, recentTransactions, recentExchanges] = await Promise.all([
+  const [trendTransactions, exchangeDkkEntries, balances, recentTransactions, recentExchanges, expenseByCategory, uncategorized, monthlyBudgets] = await Promise.all([
     prisma.transaction.findMany({
       where: {
         userId: user.id,
@@ -246,8 +252,36 @@ export default async function Dashboard({
         provider: true,
         createdAt: true
       }
-    })
+    }),
+    prisma.transaction.groupBy({
+      by: ["category"],
+      _sum: { amount: true },
+      where: {
+        userId: user.id,
+        type: "EXPENSE",
+        currency: expenseCurrency,
+        ...nonRepaymentExpenseFilter,
+        AND: [{ category: { not: null } }, { category: { not: "" } }],
+        createdAt: { gte: start, lte: end }
+      },
+      orderBy: {
+        _sum: { amount: "desc" }
+      }
+    }),
+    prisma.transaction.aggregate({
+      _sum: { amount: true },
+      where: {
+        userId: user.id,
+        type: "EXPENSE",
+        currency: expenseCurrency,
+        AND: [nonRepaymentExpenseFilter, { OR: [{ category: null }, { category: "" }] }],
+        createdAt: { gte: start, lte: end }
+      }
+    }),
+    monthlyBudgetPromise
   ]);
+
+  const monthlyBudget = monthlyBudgets[0];
 
   const exchangeToDkkExpense = (entry: {
     fromAmountDkk: number;
@@ -426,33 +460,7 @@ export default async function Dashboard({
     })
     .join(" ");
 
-  const [expenseByCategory, uncategorized] = await Promise.all([
-    prisma.transaction.groupBy({
-      by: ["category"],
-      _sum: { amount: true },
-      where: {
-        userId: user.id,
-        type: "EXPENSE",
-        currency: expenseCurrency,
-        ...nonRepaymentExpenseFilter,
-        AND: [{ category: { not: null } }, { category: { not: "" } }],
-        createdAt: { gte: start, lte: end }
-      },
-      orderBy: {
-        _sum: { amount: "desc" }
-      }
-    }),
-    prisma.transaction.aggregate({
-      _sum: { amount: true },
-      where: {
-        userId: user.id,
-        type: "EXPENSE",
-        currency: expenseCurrency,
-        AND: [nonRepaymentExpenseFilter, { OR: [{ category: null }, { category: "" }] }],
-        createdAt: { gte: start, lte: end }
-      }
-    })
-  ]);
+
 
   const exchangeAmount =
     expenseCurrency === "DKK"
@@ -472,13 +480,13 @@ export default async function Dashboard({
 
   const totalBreakdown = breakdownItems.reduce((acc, item) => acc + item.amount, 0);
   const chartColors = [
-    "#facc15",
-    "#38bdf8",
-    "#34d399",
-    "#f472b6",
-    "#a78bfa",
-    "#fb7185",
-    "#f97316"
+    "var(--chart-1)",
+    "var(--chart-2)",
+    "var(--chart-3)",
+    "var(--chart-4)",
+    "var(--chart-5)",
+    "var(--chart-6)",
+    "var(--chart-7)"
   ];
 
   const conicStops = breakdownItems.map((item, index) => {
@@ -533,8 +541,7 @@ export default async function Dashboard({
     .slice(0, 5);
 
   return (
-    <main className="container-page app-enter">
-      <div className="hero-bar">
+    <AppPage header={<>
         <div className="flex min-w-0 items-center gap-3">
           <img src="/logo.svg" alt="" className="h-9 w-9 shrink-0" />
           <h1 className="truncate text-xl font-semibold text-ink">Tổng quan</h1>
@@ -544,7 +551,8 @@ export default async function Dashboard({
           email={user.email}
           primaryCurrency={primaryCurrency}
         />
-      </div>
+       </>}>
+
 
       <TimeFilterTabs
         filters={filters}
@@ -620,9 +628,13 @@ export default async function Dashboard({
         </div>
       </section>
 
-      <div className="mt-7 grid gap-7 lg:grid-cols-2">
+      <section className="mt-5" aria-label="Ngân sách tháng hiện tại">
+        <div className="mb-2 flex flex-wrap items-center justify-between gap-2"><h2 className="text-lg font-semibold">Ngân sách tháng {budgetMonth.split("-").reverse().join("/")} · {primaryCurrency}</h2><Link prefetch={false} className="py-3 text-sm font-semibold text-primary-700" href={`/budgets?month=${budgetMonth}&currency=${primaryCurrency}`}>Xem ngân sách</Link></div>
+        {monthlyBudget ? <BudgetCard budget={monthlyBudget} /> : <div className="card"><p className="text-sm text-slate-600">Đặt hạn mức tổng để theo dõi chi tiêu thực tế trong tháng hiện tại.</p><Link prefetch={false} className="button mt-3" href={`/budgets?month=${budgetMonth}&currency=${primaryCurrency}`}>Thiết lập ngân sách</Link></div>}
+      </section>
+      <div className="mt-7 grid grid-cols-1 gap-7 lg:grid-cols-2">
         <section aria-labelledby="trend-title">
-          <div className="flex items-center justify-between gap-3">
+          <div className="flex flex-wrap items-center justify-between gap-3">
             <div>
               <h2 id="trend-title" className="text-xl font-semibold text-ink">Xu hướng thu và chi</h2>
               <p className="mt-0.5 text-sm text-slate-500">Đơn vị {primaryCurrency} · {periodLabel}</p>
@@ -644,17 +656,17 @@ export default async function Dashboard({
                       y1={trendChartHeight - trendChartPaddingY}
                       x2={trendChartWidth - trendChartPaddingX}
                       y2={trendChartHeight - trendChartPaddingY}
-                      stroke="#E1E5EA"
+                      stroke="rgb(var(--neutral-200))"
                       strokeWidth="1"
                     />
-                    <polyline fill="none" stroke="#2E9D62" strokeWidth="3" strokeLinecap="round" strokeLinejoin="round" points={incomeLinePoints} />
-                    <polyline fill="none" stroke="#DC4C4C" strokeWidth="3" strokeLinecap="round" strokeLinejoin="round" points={expenseLinePoints} />
+                    <polyline fill="none" stroke="rgb(var(--income))" strokeWidth="3" strokeLinecap="round" strokeLinejoin="round" points={incomeLinePoints} />
+                    <polyline fill="none" stroke="rgb(var(--expense))" strokeWidth="3" strokeLinecap="round" strokeLinejoin="round" points={expenseLinePoints} />
                     {trendData.map((item, index) => {
                       const x = trendChartPaddingX + trendStepX * index;
                       return (
                         <g key={item.label}>
-                          <circle cx={x} cy={getTrendY(item.income)} r="3" fill="#2E9D62" />
-                          <circle cx={x} cy={getTrendY(item.expense)} r="3" fill="#DC4C4C" />
+                          <circle cx={x} cy={getTrendY(item.income)} r="3" fill="rgb(var(--income))" />
+                          <circle cx={x} cy={getTrendY(item.expense)} r="3" fill="rgb(var(--expense))" />
                         </g>
                       );
                     })}
@@ -663,7 +675,7 @@ export default async function Dashboard({
                     {trendData.map((item) => <span key={item.label} className="truncate text-center">{item.label}</span>)}
                   </div>
                 </div>
-                <div className="mt-4 flex items-center gap-4 text-xs text-slate-500">
+                <div className="mt-4 flex flex-wrap items-center gap-4 text-xs text-slate-500">
                   <span className="flex items-center gap-2"><span className="h-2 w-2 rounded-full bg-success" />Thu nhập</span>
                   <span className="flex items-center gap-2"><span className="h-2 w-2 rounded-full bg-danger" />Chi tiêu</span>
                 </div>
@@ -675,7 +687,7 @@ export default async function Dashboard({
                 </span>
                 <h3 className="mt-3 text-base font-semibold text-ink">Chưa có dữ liệu trong kỳ này</h3>
                 <p className="mt-1 text-sm text-slate-500">Thêm giao dịch để xem xu hướng thu và chi.</p>
-                <Link href="/add" className="mt-4 inline-flex min-h-10 items-center gap-2 rounded-control bg-primary-600 px-4 text-sm font-semibold text-white">
+                <Link prefetch={false} href="/add" className="mt-4 inline-flex min-h-11 items-center gap-2 rounded-control bg-primary-600 px-4 text-sm font-semibold text-on-accent">
                   <PlusIcon className="h-4 w-4" />Thêm giao dịch
                 </Link>
               </div>
@@ -684,7 +696,7 @@ export default async function Dashboard({
         </section>
 
         <section aria-labelledby="breakdown-title">
-          <div className="flex items-center justify-between gap-3">
+          <div className="flex flex-wrap items-center justify-between gap-3">
             <div>
               <h2 id="breakdown-title" className="text-xl font-semibold text-ink">Phân bổ chi tiêu</h2>
               <p className="mt-0.5 text-sm text-slate-500">Tiền đang được chi vào đâu</p>
@@ -693,10 +705,10 @@ export default async function Dashboard({
           </div>
           <div className="card mt-3">
             {totalBreakdown > 0 ? (
-              <div className="grid items-center gap-5 sm:grid-cols-[168px_minmax(0,1fr)]">
+              <div className="grid grid-cols-1 items-center gap-5 sm:grid-cols-[168px_minmax(0,1fr)]">
                 <div className="flex justify-center">
-                  <div className="relative h-36 w-36 rounded-full" style={{ background: `conic-gradient(${gradient})` }}>
-                    <div className="absolute inset-5 flex flex-col items-center justify-center rounded-full bg-white text-center">
+                  <div className="relative aspect-square w-36 max-w-full rounded-full" style={{ background: `conic-gradient(${gradient})` }}>
+                    <div className="absolute inset-5 flex flex-col items-center justify-center rounded-full bg-surface text-center">
                       <span className="text-xs text-slate-500">Tổng chi</span>
                       <span className="money-value mt-1 max-w-[96px] break-words text-sm font-bold text-ink">{formatMoney(totalBreakdown, expenseCurrency)}</span>
                     </div>
@@ -704,7 +716,7 @@ export default async function Dashboard({
                 </div>
                 <div className="grid gap-2.5 text-sm text-slate-600">
                   {conicStops.map((item) => (
-                    <div key={item.label} className="flex items-center justify-between gap-3">
+                    <div key={item.label} className="flex flex-wrap items-center justify-between gap-3">
                       <span className="flex min-w-0 items-center gap-2">
                         <span className="h-2.5 w-2.5 shrink-0 rounded-full" style={{ backgroundColor: item.color }} />
                         <span className="truncate">{item.label}</span>
@@ -728,17 +740,17 @@ export default async function Dashboard({
       </div>
 
       <section className="mt-7" aria-labelledby="recent-title">
-        <div className="flex items-center justify-between gap-3">
+        <div className="flex flex-wrap items-center justify-between gap-3">
           <div>
             <h2 id="recent-title" className="text-xl font-semibold text-ink">Giao dịch gần đây</h2>
             <p className="mt-0.5 text-sm text-slate-500">5 hoạt động mới nhất</p>
           </div>
-          <Link href="/history" className="inline-flex min-h-11 items-center gap-1 text-sm font-semibold text-primary-600 focus-visible:rounded focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary-300">
+          <Link prefetch={false} href="/history" className="inline-flex min-h-11 items-center gap-1 text-sm font-semibold text-primary-600 focus-visible:rounded focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary-300">
             Xem tất cả <ChevronRightIcon className="h-4 w-4" />
           </Link>
         </div>
         {recentItems.length > 0 ? (
-          <div className="mt-3 overflow-hidden rounded-card border border-slate-200 bg-white shadow-soft">
+          <div className="mt-3 overflow-hidden rounded-card border border-slate-200 bg-surface shadow-soft">
             {recentItems.map((item, index) => {
               const ItemIcon = item.type === "INCOME" ? IncomeIcon : item.type === "EXPENSE" ? ExpenseIcon : ExchangeIcon;
               const iconTone = item.type === "INCOME" ? "bg-success-light text-success-dark" : item.type === "EXPENSE" ? "bg-danger-light text-danger-dark" : "bg-primary-50 text-primary-700";
@@ -759,12 +771,12 @@ export default async function Dashboard({
           <div className="card mt-3 flex min-h-36 flex-col items-center justify-center text-center">
             <p className="text-base font-semibold text-ink">Chưa có giao dịch</p>
             <p className="mt-1 text-sm text-slate-500">Thêm giao dịch đầu tiên để bắt đầu theo dõi.</p>
-            <Link href="/add" className="mt-4 inline-flex min-h-10 items-center gap-2 rounded-control bg-primary-600 px-4 text-sm font-semibold text-white">
+            <Link prefetch={false} href="/add" className="mt-4 inline-flex min-h-11 items-center gap-2 rounded-control bg-primary-600 px-4 text-sm font-semibold text-on-accent">
               <PlusIcon className="h-4 w-4" />Thêm giao dịch
             </Link>
           </div>
         )}
       </section>
-    </main>
+    </AppPage>
   );
 }

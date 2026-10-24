@@ -1,3 +1,4 @@
+import { withApiSecurity } from "@/lib/http-security";
 import { nonRepaymentExpenseFilter } from "@/lib/credit";
 import { NextRequest, NextResponse } from "next/server";
 import { prisma } from "@/lib/db";
@@ -7,7 +8,7 @@ import { getTimeZoneFromRequest, parseDateInputInTimeZone } from "@/lib/timezone
 
 export const dynamic = "force-dynamic";
 
-export async function GET(req: NextRequest) {
+async function handleGET(req: NextRequest) {
   const user = await getApiSessionUser(req);
   if (!user) {
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
@@ -100,3 +101,5 @@ export async function GET(req: NextRequest) {
     }
   });
 }
+
+export const GET = withApiSecurity(handleGET);

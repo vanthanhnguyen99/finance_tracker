@@ -1,5 +1,6 @@
 "use client";
 
+import { Dialog } from "./ui/Dialog";
 import { useEffect, useState } from "react";
 import { usePathname, useRouter, useSearchParams } from "next/navigation";
 import type { TimeFilter } from "@/lib/date";
@@ -38,12 +39,13 @@ export function TimeFilterTabs({
     const hasFilterQuery = searchParams.has("filter");
     const hasCustomQuery = searchParams.has("from") && searchParams.has("to");
     if (hasFilterQuery || hasCustomQuery) return;
-    const saved = localStorage.getItem(STORAGE_KEY) as TimeFilter | null;
+    let saved: TimeFilter | null = null;
+    try { saved = localStorage.getItem(STORAGE_KEY) as TimeFilter | null; } catch { return; }
     if (!saved || saved === active) return;
     const params = new URLSearchParams(searchParams.toString());
     params.set("filter", saved);
     params.set("expenseCurrency", expenseCurrency);
-    params.set("refresh", String(Date.now()));
+    params.delete("refresh");
     router.replace(`${pathname}?${params.toString()}`, { scroll: false });
   }, [active, expenseCurrency, pathname, router, searchParams]);
 
@@ -57,13 +59,13 @@ export function TimeFilterTabs({
   }, [isOpen]);
 
   function setFilter(next: TimeFilter) {
-    localStorage.setItem(STORAGE_KEY, next);
+    try { localStorage.setItem(STORAGE_KEY, next); } catch { /* Optional preference. */ }
     const params = new URLSearchParams(searchParams.toString());
     params.set("filter", next);
     params.delete("from");
     params.delete("to");
     params.set("expenseCurrency", expenseCurrency);
-    params.set("refresh", String(Date.now()));
+    params.delete("refresh");
     setIsOpen(false);
     router.push(`${pathname}?${params.toString()}`, { scroll: false });
   }
@@ -74,13 +76,13 @@ export function TimeFilterTabs({
       return;
     }
     setCustomError("");
-    localStorage.setItem(STORAGE_KEY, "month");
+    try { localStorage.setItem(STORAGE_KEY, "month"); } catch { /* Optional preference. */ }
     const params = new URLSearchParams(searchParams.toString());
     params.delete("filter");
     params.set("from", from);
     params.set("to", to);
     params.set("expenseCurrency", expenseCurrency);
-    params.set("refresh", String(Date.now()));
+    params.delete("refresh");
     setIsOpen(false);
     router.push(`${pathname}?${params.toString()}`, { scroll: false });
   }
@@ -93,7 +95,7 @@ export function TimeFilterTabs({
           setIsCustomOpen(customActive);
           setIsOpen(true);
         }}
-        className="flex min-h-12 w-full items-center gap-3 rounded-control border border-slate-200 bg-white px-3 text-left shadow-soft transition active:bg-slate-50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary-300"
+        className="flex min-h-12 w-full items-center gap-3 rounded-control border border-slate-200 bg-surface px-3 text-left shadow-soft transition active:bg-slate-50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary-300"
         aria-haspopup="dialog"
         aria-expanded={isOpen}
       >
@@ -106,15 +108,7 @@ export function TimeFilterTabs({
       </button>
 
       {isOpen ? (
-        <div className="fixed inset-0 z-[70] flex items-end justify-center bg-slate-950/35 sm:items-center sm:p-4" role="presentation" onMouseDown={() => setIsOpen(false)}>
-          <div
-            role="dialog"
-            aria-modal="true"
-            aria-labelledby="time-filter-title"
-            className="w-full max-w-md rounded-t-[20px] bg-white p-4 shadow-sheet sm:rounded-[20px]"
-            style={{ paddingBottom: "max(16px, env(safe-area-inset-bottom))" }}
-            onMouseDown={(event) => event.stopPropagation()}
-          >
+        <Dialog open={isOpen} onClose={() => setIsOpen(false)} labelledBy="time-filter-title">
             <div className="mx-auto mb-4 h-1 w-10 rounded-full bg-slate-200 sm:hidden" />
             <div className="flex items-center justify-between gap-3">
               <div>
@@ -180,8 +174,7 @@ export function TimeFilterTabs({
                 <button type="submit" className="button">Áp dụng</button>
               </form>
             ) : null}
-          </div>
-        </div>
+        </Dialog>
       ) : null}
     </section>
   );

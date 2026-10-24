@@ -1,8 +1,13 @@
 import "./globals.css";
 import type { Metadata, Viewport } from "next";
-import { BottomNav } from "./components/BottomNav";
+import { cookies, headers } from "next/headers";
+import { parseAppearance, parseTransparency, THEME_BOOTSTRAP_SCRIPT } from "@/lib/theme";
+import { ThemeProvider } from "./components/ThemeProvider";
+import { SessionUiReset } from "./components/SessionUiReset";
 import { TimezoneCookieSync } from "./components/TimezoneCookieSync";
-import { DataRefreshSync } from "./components/DataRefreshSync";
+
+// Resolve the server rollout flag per request, including authentication pages.
+export const dynamic = "force-dynamic";
 
 export const metadata: Metadata = {
   title: "Quản lý chi tiêu DKK/VND",
@@ -19,25 +24,31 @@ export const viewport: Viewport = {
   width: "device-width",
   initialScale: 1,
   viewportFit: "cover",
-  themeColor: "#F8F9FB"
+  // Browser chrome requires a literal color; keep in sync with --app-bg.
+  themeColor: process.env.GLASS_UI_ENABLED === "true" ? "#F4F6FB" : "#F8F9FB"
 };
 
-export default function RootLayout({ children }: { children: React.ReactNode }) {
+export default async function RootLayout({ children }: { children: React.ReactNode }) {
+  const preferences = await cookies();
+  const nonce = (await headers()).get("x-nonce") ?? undefined;
+  const settings = {
+    appearance: parseAppearance(preferences.get("finance_appearance")?.value),
+    transparency: parseTransparency(preferences.get("finance_transparency")?.value)
+  };
   return (
-    <html lang="vi">
+    <html lang="vi" suppressHydrationWarning
+      data-appearance={settings.appearance} data-transparency-preference={settings.transparency}
+      data-color-mode={settings.appearance === "dark" ? "dark" : "light"}
+      data-visual-style={process.env.GLASS_UI_ENABLED === "true" ? "glass" : "classic"}>
       <head>
-        <link rel="preconnect" href="https://fonts.googleapis.com" />
-        <link rel="preconnect" href="https://fonts.gstatic.com" crossOrigin="anonymous" />
-        <link
-          href="https://fonts.googleapis.com/css2?family=Be+Vietnam+Pro:wght@400;500;600;700&display=swap"
-          rel="stylesheet"
-        />
+        <script nonce={nonce} dangerouslySetInnerHTML={{ __html: THEME_BOOTSTRAP_SCRIPT }} />
       </head>
       <body>
+        <ThemeProvider initialSettings={settings}>
         <TimezoneCookieSync />
-        <DataRefreshSync />
+        <SessionUiReset />
         {children}
-        <BottomNav />
+        </ThemeProvider>
       </body>
     </html>
   );

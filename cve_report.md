@@ -1,5 +1,10 @@
 # Báo cáo CVE cho `finance-tracker`
 
+> **Tài liệu lịch sử, đã được thay thế:** nhận định về Next 16.1.6 bên dưới không
+> còn hiện hành. Bản sửa ngày 17/10/2026 nâng Next lên 16.4.2, cập nhật lockfile và
+> bổ sung bản vá source cục bộ cho braces. Xem [hướng dẫn hiện hành](docs/security-deployment.md)
+> và [báo cáo rà soát](docs/security-review-cloudflare-2026-10-17.md).
+
 > Nguồn input: `package.json` anh gửi (Next.js + React 19 + Prisma). Báo cáo này dựa trên kiểm tra public advisories (Next.js/Vercel + React blog + Snyk package pages). Với npm ecosystem, CVE có thể nằm ở **transitive dependencies** (phụ thuộc gián tiếp) trong lockfile, nên phần “Checklist” ở cuối là bước chốt để ra kết luận cuối cùng theo `package-lock.json`/`pnpm-lock.yaml`.
 
 ---

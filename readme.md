@@ -31,10 +31,10 @@
   - Sửa Exchange: DKK đổi, VND nhận, phí và đơn vị phí (DKK/VND)
 - **Đăng xuất**:
   - Có nút `Đăng xuất` rõ ràng ở các màn chính (Tổng quan / Thêm / Lịch sử)
-- **Quên mật khẩu (cần admin duyệt)**:
-  - User gửi yêu cầu đặt mật khẩu mới từ màn `Quên mật khẩu`
-  - Admin duyệt/từ chối yêu cầu trên admin app
-  - Chỉ sau khi duyệt, mật khẩu mới mới có hiệu lực
+- **Khôi phục mật khẩu qua liên kết dùng một lần**:
+  - User liên hệ admin qua kênh đã đăng ký để xác minh danh tính
+  - Admin cấp liên kết khôi phục có hiệu lực 15 phút; user tự đặt mật khẩu mới
+  - Đổi mật khẩu thu hồi mọi session và liên kết khôi phục cũ
 - **Admin backup/restore dữ liệu toàn hệ thống**:
   - Backup JSON toàn hệ thống (wallets, users, sessions, password reset requests, transactions, exchanges)
   - Restore từ file JSON với mode mặc định ghi đè toàn bộ dữ liệu hiện tại
@@ -69,6 +69,9 @@
 - **Backend**: Next.js API Routes
 - **Database**: PostgreSQL + Prisma ORM
 - **Deployment**: Docker + Docker Compose
+
+Hướng dẫn bảo mật, khôi phục tài khoản và triển khai qua Cloudflare:
+[security-deployment.md](docs/security-deployment.md).
 
 ---
 
@@ -120,7 +123,9 @@
 ## 6. UI/UX
 
 - Mobile‑first, thao tác 1 chạm
-- Bottom nav: Tổng quan / Thêm / Lịch sử
+- Bottom nav: Tổng quan / Báo cáo / Thêm / Giao dịch / Ngân sách.
+- Quy tắc cố định: nút **Thêm luôn lớn nhất và nằm chính giữa** thanh điều hướng (vị trí thứ 3 trong 5 mục); các mục còn lại nhỏ hơn.
+- Báo cáo nằm giữa Tổng quan và Thêm, mở `/reports` với nội dung **Sắp ra mắt**.
 - Tăng vùng chạm cho nút `Tổng quan` và `Lịch sử` trên bottom nav để thao tác tốt hơn trên iOS Safari
 - Input tiền có format dấu phẩy khi nhập
 - Thông báo lưu thành công màu xanh và tự ẩn sau 5s
@@ -130,127 +135,41 @@
 
 ## 7. Docker & Env
 
-**Ports**
-- Web: `5050`
-- Postgres: `4500`
-- Admin App (local only): `127.0.0.1:6070`
+- Public: https://financetracker.wt.id.vn qua Cloudflare Tunnel.
+- Origin: `192.168.10.160:5050`, chỉ nhận kết nối từ connector `192.168.10.177`.
+- App không publish port; admin `127.0.0.1:6070`, PostgreSQL `127.0.0.1:4500`.
+- Sao chép `.env.example` thành `.env`, dùng mật khẩu/token ngẫu nhiên và giữ file private.
+- `DATABASE_URL` là owner dùng cho migration; `APP_DATABASE_URL` và
+  `ADMIN_DATABASE_URL` là role runtime được cấp quyền hạn chế, sinh bởi script provisioning.
+- Docker build dùng `npm ci` và lockfile. App/admin chạy non-root, read-only, tách secret.
 
-**Scripts**
-- `./start.sh` — chạy Docker Compose
-- `./stop.sh` — dừng Docker Compose
-
-**Dependency lock (khuyến nghị bắt buộc cho Docker build)**
-- Dự án dùng `package-lock.json`.
-- Trong Dockerfile, stage cài dependency ưu tiên `npm ci` khi có lockfile để build deterministic.
-
-**.env**
-```
-DATABASE_URL=postgresql://expense_user:<password>@db:5432/expense_db
-POSTGRES_USER=expense_user
-POSTGRES_PASSWORD=<password>
-POSTGRES_DB=expense_db
-```
-
----
-
-## 8. Cách chạy
+## 8. Cách chạy lần đầu
 
 ```bash
+npm ci
+docker compose up -d db
+docker compose run --rm --build migrate
+node scripts/provision-runtime-roles.mjs
+docker compose build app admin
 ./start.sh
 ```
 
-Chạy migrate lần đầu:
-
-```bash
-docker compose run --rm app npx prisma migrate dev --name init
-```
-
-Truy cập:
-- Web: `http://<host>:5050`
-- Admin: `http://127.0.0.1:6070` (nhập `ADMIN_TOKEN`, không expose public)
-- Login: `http://<host>:5050/login`
-
----
+Đọc [hướng dẫn triển khai](docs/security-deployment.md) trước khi áp dụng ở môi trường khác;
+địa chỉ origin/connector và APP_ORIGINS phải khớp với hạ tầng thực tế.
 
 ## 9. Deployment (Production)
 
-### 9.1 Chuẩn bị server
-- OS khuyến nghị: Ubuntu 22.04+.
-- Cài Docker + Docker Compose plugin.
-- Mở firewall:
-  - Public: `80`, `443` (cho reverse proxy).
-  - Chỉ nội bộ/local: `6070` (admin app), `4500` (Postgres, nếu không cần thì không expose).
+1. Tạo backup database, source/config và giữ image đang chạy để rollback.
+2. Chạy các kiểm tra phù hợp, build trước: `docker compose build app admin migrate`.
+3. Dừng app/admin để ngăn ghi đồng thời trong migration: `docker compose stop app admin`.
+4. Chạy `docker compose run --rm --no-deps migrate` bằng owner riêng.
+5. Chạy `docker compose up -d --no-deps app admin ingress` và kiểm tra domain, login/logout,
+   cache, quyền database và các đường vào bị chặn.
 
-### 9.2 Cấu hình biến môi trường
-- Tạo/cập nhật file `.env` trước khi deploy:
-  - `DATABASE_URL`
-  - `POSTGRES_USER`
-  - `POSTGRES_PASSWORD`
-  - `POSTGRES_DB`
-  - `ADMIN_TOKEN` (bắt buộc, đủ mạnh)
-- Không commit `.env` lên git.
-
-### 9.3 Deploy lần đầu
-```bash
-docker compose build
-./start.sh
-docker compose run --rm app npx prisma migrate deploy
-```
-
-Kiểm tra:
-```bash
-docker compose ps
-docker compose logs app --tail=100
-docker compose logs admin --tail=100
-```
-
-### 9.4 Reverse proxy + HTTPS
-- Khuyến nghị đặt Nginx/Caddy phía trước app `5050`.
-- Route public domain về `app:3000` (container web).
-- Admin app giữ local-only (`127.0.0.1:6070`) để không expose ra internet.
-
-Ví dụ Nginx (rút gọn):
-```nginx
-server {
-  listen 80;
-  server_name your-domain.com;
-  return 301 https://$host$request_uri;
-}
-
-server {
-  listen 443 ssl;
-  server_name your-domain.com;
-
-  ssl_certificate /path/fullchain.pem;
-  ssl_certificate_key /path/privkey.pem;
-
-  location / {
-    proxy_pass http://127.0.0.1:5050;
-    proxy_set_header Host $host;
-    proxy_set_header X-Forwarded-Proto https;
-    proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
-  }
-}
-```
-
-### 9.5 Cập nhật phiên bản
-```bash
-git pull
-docker compose build
-./stop.sh
-./start.sh
-docker compose run --rm app npx prisma migrate deploy
-```
-
-### 9.6 Backup/Restore
-- Backup nhanh:
-```bash
-docker compose exec -T db pg_dump -U "$POSTGRES_USER" "$POSTGRES_DB" > backup.sql
-```
-- Restore:
-```bash
-cat backup.sql | docker compose exec -T db psql -U "$POSTGRES_USER" "$POSTGRES_DB"
-```
+Admin chỉ truy cập qua localhost hoặc SSH local forward; không route admin ra public.
+Migrations dùng service `migrate`, không chạy Prisma CLI trong image app đã thu gọn.
+Giữ file backup như dữ liệu nhạy cảm. Restore JSON không kích hoạt lại session cũ và
+không chứa token khôi phục; tài khoản cần đăng nhập lại sau restore.
 
 ---
 
@@ -259,7 +178,7 @@ cat backup.sql | docker compose exec -T db psql -U "$POSTGRES_USER" "$POSTGRES_D
 - Lưu tiền dạng integer (minor units): DKK = øre (×100), VND = nguyên.
 - Các API `transactions`/`exchange` hỗ trợ create/update/delete.
 - Dashboard dùng `noStore()` để luôn hiển thị dữ liệu mới.
-- Điều hướng tab `/` và `/history` dùng query `refresh` để luôn lấy dữ liệu mới khi chuyển tab.
+- Điều hướng tab dùng URL ổn định, không gắn timestamp `refresh`. Bấm lại tab hiện tại để làm mới; sau thay đổi dữ liệu dùng `DataRefreshSync` và revalidation.
 - Sau khi sửa/xóa transaction hoặc exchange, hệ thống `revalidatePath("/")` và `revalidatePath("/history")` để tránh stale data khi quay lại Tổng quan.
 - API export CSV vẫn khả dụng: `GET /api/export/csv` (có auth, hỗ trợ filter `type/currency/start/end`).
 - Tối ưu hiệu năng truy vấn:
@@ -294,13 +213,11 @@ cat backup.sql | docker compose exec -T db psql -U "$POSTGRES_USER" "$POSTGRES_D
   - Sau khi được approve, user ở trạng thái `ACTIVE`.
   - Chỉ user `ACTIVE` mới được phép đăng nhập và truy cập các trang nghiệp vụ.
 
-### 11.7 Luồng quên mật khẩu (Admin Approval)
-- User vào trang `/forgot-password`, nhập email và mật khẩu mới.
-- Hệ thống tạo yêu cầu reset mật khẩu ở trạng thái `PENDING`.
-- Admin vào admin app để:
-  - Approve: áp dụng mật khẩu mới cho user và thu hồi toàn bộ session hiện tại.
-  - Reject: từ chối yêu cầu, mật khẩu cũ tiếp tục có hiệu lực.
-- Khi yêu cầu chưa được duyệt, mật khẩu mới chưa thể đăng nhập.
+### 11.7 Khôi phục mật khẩu
+- `/forgot-password` hướng dẫn liên hệ admin qua kênh đã đăng ký.
+- Sau khi xác minh độc lập, admin cấp liên kết dùng một lần, hết hạn sau 15 phút.
+- User tự chọn mật khẩu mới tại `/reset-password`; thành công sẽ thu hồi mọi session.
+- API reset/approve cũ trả 410 và không thay đổi dữ liệu xác thực.
 
 ### 11.3 Trạng thái user
 - `PENDING`: đã đăng ký, đang chờ admin duyệt.
@@ -358,8 +275,9 @@ cat backup.sql | docker compose exec -T db psql -U "$POSTGRES_USER" "$POSTGRES_D
 ## 13. Cập nhật gần đây (đã triển khai)
 
 ### 13.1 Bottom Navigation
-- Điều chỉnh `BottomNav` theo layout 3 mục: `Tổng quan / Thêm / Lịch sử`.
-- Mục `Thêm` đặt ở giữa, dạng nút nổi (floating) để nổi bật hơn.
+- `BottomNav` gồm 5 mục theo thứ tự: `Tổng quan / Báo cáo / Thêm / Giao dịch / Ngân sách`.
+- Mục `Thêm` luôn ở chính giữa và có kích thước lớn nhất: nút tròn 56px, icon 28px; icon mục khác 24px. Giữ quy tắc này khi chỉnh layout.
+- Mục `Báo cáo` ở bên trái nút Thêm, ngay sau Tổng quan; trang `/reports` hiện **Sắp ra mắt**.
 - Sửa lỗi nav bar bị hở ở đáy màn hình iOS:
   - Ghim nav sát đáy (`bottom: 0`).
   - Dùng `padding-bottom: max(env(safe-area-inset-bottom), 8px)` để tránh đè thanh gesture.
@@ -396,21 +314,16 @@ cat backup.sql | docker compose exec -T db psql -U "$POSTGRES_USER" "$POSTGRES_D
   - Dùng `env(safe-area-inset-left/right)` cho container.
 - Giảm kích thước chart/card/spacings trên mobile để tránh cảm giác “quá to”.
 
-### 13.6 Quên mật khẩu cần admin duyệt
-- Thêm trang `Quên mật khẩu` tại `/forgot-password`.
-- Thêm API user gửi yêu cầu reset:
-  - `POST /api/auth/password-reset-request`
-- Admin app hỗ trợ duyệt/từ chối từng yêu cầu reset mật khẩu:
-  - `POST /api/password-reset-requests/:id/approve`
-  - `POST /api/password-reset-requests/:id/reject`
-- Khi duyệt yêu cầu:
-  - Cập nhật `passwordHash` mới cho user.
-  - Thu hồi toàn bộ session đang mở của user để đảm bảo an toàn.
+### 13.6 Khôi phục mật khẩu an toàn
+- Admin đã xác minh danh tính gọi `POST /api/users/:id/recovery-link` với `{identityVerified:true}`.
+- User dùng `POST /api/auth/reset-password` với token ngẫu nhiên dùng một lần và mật khẩu 12–128 ký tự.
+- Token lưu trong DB dưới dạng hash; liên kết hết hạn 15 phút, reset đồng thời chỉ một lần thành công.
+- Thao tác đổi mật khẩu và thu hồi session được thực hiện trong cùng transaction.
 
 ### 13.7 Security & Dependencies
 - Nâng cấp framework để xử lý các cảnh báo bảo mật đã biết:
-  - `next` -> `16.1.6`
-  - `react` / `react-dom` -> `19.2.4`
+  - `next` -> `16.4.2`
+  - `react` / `react-dom` -> `19.3.1`
 - Cập nhật thêm:
   - `postcss` -> `8.5.6`
   - `autoprefixer` -> `10.4.24`
@@ -431,6 +344,10 @@ cat backup.sql | docker compose exec -T db psql -U "$POSTGRES_USER" "$POSTGRES_D
   - `POST /api/system/restore`
   - `POST /api/system/clear-user-data`
   - `POST /api/users/:id/clear-data`
+- Export JSON chỉ thành công khi request restore tương ứng không vượt **10 MiB**
+  (tính byte UTF-8 và cả `{ mode: "replace", backup }` do giao diện gửi).
+  Backup vượt ngưỡng trả HTTP 413, không tạo file JSON không thể restore.
+  Với dữ liệu lớn, dùng PostgreSQL `pg_dump`/`pg_restore` thay cho JSON admin.
 - Phạm vi dữ liệu trong backup hệ thống:
   - `wallets`
   - `users` (gồm `displayName`, `email`, `status`, `note`, `passwordHash`, timestamps)
@@ -466,6 +383,66 @@ cat backup.sql | docker compose exec -T db psql -U "$POSTGRES_USER" "$POSTGRES_D
 - `npm run build` regenerates the Prisma client and checks the production build.
 - Migration `20260213000000_restore_auth_baseline` recreates the missing authentication bootstrap for fresh installs. It is safe to apply to existing installations and does not change previously committed migration files. Run `npx prisma migrate deploy` before starting the updated app.
 - The admin service is bound to `127.0.0.1:6070`; remote administration can use an SSH tunnel.
-- Forwarded client IPs are ignored by default. Set `TRUST_PROXY=true` only when a trusted proxy is the sole ingress and overwrites `X-Forwarded-For`. Login and reset requests also have per-account limits; without proxy trust, client limits are shared.
-- Ledger writes lock the user's database row so balance validation and the resulting write execute together. Backups use a repeatable-read snapshot; restores require the complete version-1 system backup format.
+- The private app trusts only the ingress-overwritten `X-Real-IP`; nginx admits only the configured cloudflared connector. Never expose the app port directly when proxy trust is enabled.
+- Ledger writes lock the user's database row so balance validation and the resulting write execute together. Backups use a repeatable-read snapshot; restores require a complete version-1 or version-2 system backup; version 2 also includes budgets.
 - Exchange edits preserve both the fee amount and its currency. Fees can be edited in DKK or VND.
+
+## Tìm kiếm nâng cao và ngân sách tháng
+
+- **Lịch sử** (`/history`): tìm không dấu/không phân biệt hoa thường trong ghi chú, danh mục và nơi đổi tiền; lọc loại, tiền tệ, ngày, danh mục, phương thức và khoảng tiền. Bộ lọc nằm trên URL. Mỗi lần tải 30 mục; số lượng và tổng luôn tính trên toàn bộ kết quả. CSV xuất toàn bộ kết quả theo cùng bộ lọc.
+- Khoảng tiền bắt buộc chọn tiền tệ. Với giao dịch đổi tiền, DKK so với số đem đổi, VND so với số nhận, không cộng phí. Chọn danh mục loại đổi tiền; chọn phương thức chỉ xét chi tiêu. Phương thức null cũ được coi là tiền mặt.
+- **Ngân sách** (`/budgets`): hạn mức riêng mỗi tháng, mỗi tiền tệ; có tổng tháng, danh mục và chưa phân loại. Các hạn mức độc lập, không cộng chồng. Có sửa/xóa, sao chép tháng trước (giữ hạn mức đã tồn tại) và liên kết xem giao dịch liên quan.
+- Chi tiêu tính ngân sách gồm tiền mặt và mua bằng thẻ; loại trả thẻ, đổi tiền và phí đổi. Các khoản EXPENSE khác, kể cả cho mượn/hoàn trả tiền mượn, vẫn được tính. Cảnh báo từ 80%, đạt 100% và vượt 100%; không chặn giao dịch.
+- Tổng quan hiển thị ngân sách tổng của **tháng hiện tại**, theo tiền tệ chính, độc lập với bộ lọc dashboard. Thống kê dashboard cũ giữ nguyên quy tắc. Trong lịch sử thông thường, tổng khoản chi gồm cả trả thẻ; chế độ `expenseScope=budget` chỉ tính chi tiêu ngân sách.
+- Ngày/tháng dùng múi giờ trình duyệt, mặc định UTC nếu chưa có cookie hợp lệ; DKK/VND không quy đổi hay cộng chung.
+
+### API mới
+
+- `GET /api/history`: `q`, `type=income|expense|exchange`, `currency`, `start`, `end`, `category`, `uncategorized=1`, `paymentMethod=CASH|CREDIT_CARD`, `minAmount`, `maxAmount`, `expenseScope=budget`, `cursor`. Giá trị tiền API dùng dấu chấm thập phân (DKK tối đa 2 chữ số, VND nguyên). Kết quả: `items`, `totalCount`, `summaryByCurrency` (minor units), `nextCursor`.
+- `GET /api/budgets?month=YYYY-MM&currency=DKK|VND`; mặc định tháng hiện tại và tiền tệ chính.
+- `POST /api/budgets`: `{month,currency,scope,category?,limitMajor}`; scope `TOTAL|CATEGORY|UNCATEGORIZED`.
+- `PATCH /api/budgets/[id]`: `{limitMajor}`; `DELETE /api/budgets/[id]` chỉ xóa hạn mức.
+- `POST /api/budgets/copy-previous`: `{month,currency}`; trả `{copied,skipped}`.
+- API yêu cầu tài khoản active. Sai đầu vào trả 400; trùng ngân sách trả 409; ID không tồn tại/không thuộc user trả 404. API giao dịch cũ giữ tương thích.
+
+### Migration và backup
+
+- Chạy `npx prisma migrate deploy` trước khi khởi động bản mới. Migration thêm `unaccent`, bảng Budget và index phân trang; không tự tạo hạn mức, không sửa dữ liệu giao dịch cũ.
+- Backup hệ thống mới xuất **version 2**, thêm `budgets` và `meta.budgetCount`. Restore nhận v1/v2, kiểm tra dữ liệu trước khi xóa/ghi và giữ cơ chế khóa giao dịch.
+- Restore replace v1 khôi phục trạng thái không có ngân sách; append v1 giữ ngân sách hiện có. Append v2 bỏ qua mục trùng, không ghi đè hạn mức. Chỉ bản ứng dụng mới đọc được backup v2; giữ PostgreSQL dump để rollback đầy đủ.
+- Integration suite phải chạy trên database riêng tên `finance_tracker_test`; bộ test có xóa dữ liệu. Kiểm tra trình duyệt dùng tài khoản và dữ liệu riêng, không dùng database production.
+
+
+### Hiệu năng qua Cloudflare
+
+- Các link đến dữ liệu cá nhân dùng `prefetch={false}` để tránh chạy truy vấn nền khi card vừa xuất hiện (đặc biệt các link Ngân sách trùng nhau trên Tổng quan).
+- Bộ lọc và tab dùng URL ổn định. Chỉ refresh khi cần đồng bộ dữ liệu hoặc user bấm lại tab hiện tại; không thêm timestamp để phá cache điều hướng.
+- Các truy vấn độc lập của Tổng quan chạy song song; thẻ ngân sách chỉ đọc hạn mức tổng và bỏ qua quét chi tiêu khi chưa có hạn mức phù hợp.
+- Tái sử dụng `Intl.DateTimeFormat` theo múi giờ với tối đa 64 cấu hình; không cache số liệu tài chính. Tránh tạo lại formatter cho từng giao dịch trong vòng lặp dashboard.
+- Cookie múi giờ tương đương như `Asia/Saigon` và `Asia/Ho_Chi_Minh` không gây render lại chỉ vì khác tên alias.
+- Đo cả origin và URL Cloudflare với cùng tài khoản, bộ lọc và trạng thái cache. Đếm riêng request điều hướng, prefetch và refresh; không suy ra hiệu năng từ số file JS/font đã nằm trong disk cache.
+- Giữ HTML/API tài chính theo từng tài khoản ở chế độ riêng tư; chỉ tài nguyên tĩnh có tên hash mới được cache dài hạn tại CDN. Không cấu hình Cache Everything cho trang/API có session.
+
+## Liquid Glass UI (feature flag)
+
+`GLASS_UI_ENABLED` defaults to `false`. Set it to `true` for the Apple-inspired
+Liquid Glass presentation and recreate only the app service. Classic and glass use the same component
+and financial logic. The finance routes share a persistent shell; transaction drafts
+are kept per user/type within the browser tab, and History resumes filters, loaded
+pages and scroll while invalidating stale data after mutations.
+
+See [implementation, QA and rollout notes](docs/liquid-glass-qa.md) for the isolated
+preview/test commands, rollback behavior and the required real-iPhone release checks.
+Use `npm run lint` for the ESLint CLI and `npm run test:ui` for Chromium/WebKit tests
+with `TEST_DATABASE_URL` set to the dedicated local test database.
+
+
+### Appearance and accessibility
+
+The account menu now includes **Giao diện** (Theo hệ thống / Sáng / Tối) and
+**Hiệu ứng trong suốt** (Theo hệ thống / Tiêu chuẩn / Giảm trong suốt).
+These browser preferences persist in non-sensitive cookies, default to the system,
+and apply to every view, authentication page and dialog before paint. High contrast
+forces opaque controls; reduced motion follows the OS. Financial cards and forms
+always use solid surfaces. The center + is an action button separate from the four
+navigation links. No database migration is required for these presentation changes.

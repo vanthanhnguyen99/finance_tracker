@@ -1,155 +1,81 @@
+import { withApiSecurity, requireUserRateLimit, HttpInputError } from "@/lib/http-security";
 import { NextRequest, NextResponse } from "next/server";
-import { prisma } from "@/lib/db";
 import { getApiSessionUser } from "@/lib/auth";
-import { getTimeZoneFromRequest, parseDateInputInTimeZone } from "@/lib/timezone";
-
+import { getHistoryRows, parseHistoryFilters } from "@/lib/history";
+import { getTimeZoneFromRequest } from "@/lib/timezone";
+import { FinanceInputError } from "@/lib/finance-validation";
 export const dynamic = "force-dynamic";
-
 function escapeCsv(value: string | number | null | undefined) {
-  if (value === null || value === undefined) return "";
-  const text = String(value);
-  if (!/[",\n]/.test(text)) return text;
-  return `"${text.replaceAll('"', '""')}"`;
+  let text = value == null ? "" : String(value);
+  // Prevent spreadsheet formulas in user-controlled text.
+  if (/^[\s]*[=+@-]/.test(text)) text = `'${text}`;
+  return /[",\r\n]/.test(text) ? `"${text.replaceAll('"', '""')}"` : text;
 }
-
-export async function GET(req: NextRequest) {
+async function handleGET(req: NextRequest) {
   const user = await getApiSessionUser(req);
-  if (!user) {
+  if (!user)
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
-  }
-
-  const { searchParams } = new URL(req.url);
-  const userTimeZone = getTimeZoneFromRequest(req);
-  const type = searchParams.get("type");
-  const currency = searchParams.get("currency");
-  const startParam = searchParams.get("start");
-  const endParam = searchParams.get("end");
-  const startDate = parseDateInputInTimeZone(startParam, userTimeZone, false) ?? undefined;
-  const endDate = parseDateInputInTimeZone(endParam, userTimeZone, true) ?? undefined;
-  if (
-    (startParam && !startDate) ||
-    (endParam && !endDate) ||
-    (startDate && endDate && startDate > endDate)
-  ) {
-    return NextResponse.json({ error: "Invalid date range" }, { status: 400 });
-  }
-  const createdAt =
-    startDate || endDate
-      ? {
-          gte: startDate,
-          lte: endDate
-        }
-      : undefined;
-
-  const normalizedType =
-    type?.toLowerCase() === "income"
-      ? "INCOME"
-      : type?.toLowerCase() === "expense"
-        ? "EXPENSE"
-        : type?.toLowerCase() === "exchange"
-          ? "EXCHANGE"
-          : undefined;
-  const normalizedCurrency =
-    currency?.toUpperCase() === "DKK"
-      ? "DKK"
-      : currency?.toUpperCase() === "VND"
-        ? "VND"
-        : undefined;
-
-  const includeTransactions = !normalizedType || normalizedType === "INCOME" || normalizedType === "EXPENSE";
-  const includeExchanges = !normalizedType || normalizedType === "EXCHANGE";
-
-  const [transactions, exchanges] = await Promise.all([
-    includeTransactions
-      ? prisma.transaction.findMany({
-          where: {
-            userId: user.id,
-            ...(normalizedType ? { type: normalizedType } : {}),
-            ...(normalizedCurrency ? { currency: normalizedCurrency } : {}),
-            ...(createdAt ? { createdAt } : {})
-          },
-          orderBy: { createdAt: "desc" }
-        })
-      : Promise.resolve([]),
-    includeExchanges
-      ? prisma.exchange.findMany({
-          where: {
-            userId: user.id,
-            ...(createdAt ? { createdAt } : {})
-          },
-          orderBy: { createdAt: "desc" }
-        })
-      : Promise.resolve([])
-  ]);
-
-  const rows: string[] = [];
-  rows.push(
-    [
-      "createdAt",
-      "type",
-      "currency",
-      "amount",
-      "category",
-      "note",
-      "paymentMethod",
-      "detail",
-      "provider",
-      "fee"
-    ].join(",")
-  );
-
-  const records = [
-    ...transactions.map((txn) => ({ kind: "transaction" as const, createdAt: txn.createdAt, txn })),
-    ...exchanges.map((exchange) => ({ kind: "exchange" as const, createdAt: exchange.createdAt, exchange }))
-  ].sort((a, b) => b.createdAt.getTime() - a.createdAt.getTime());
-
-  for (const record of records) {
-    if (record.kind === "transaction") {
-      const { txn } = record;
-      const amount = txn.currency === "DKK" ? txn.amount / 100 : txn.amount;
+  requireUserRateLimit(user.id, "csv-export", 4);
+  try {
+    const records = await getHistoryRows(
+      user.id,
+      parseHistoryFilters(
+        new URL(req.url).searchParams,
+        getTimeZoneFromRequest(req),
+      ),
+    );
+    if (records.length > 10000) throw new HttpInputError("Kết quả vượt 10.000 mục. Hãy chọn khoảng ngày nhỏ hơn.", 400);
+    const rows = [
+      [
+        "createdAt",
+        "type",
+        "currency",
+        "amount",
+        "category",
+        "note",
+        "paymentMethod",
+        "detail",
+        "provider",
+        "fee",
+      ].join(","),
+    ];
+    for (const row of records) {
+      const exchange = row.type === "EXCHANGE";
       rows.push(
         [
-          escapeCsv(txn.createdAt.toISOString()),
-          escapeCsv(txn.type),
-          escapeCsv(txn.currency),
-          escapeCsv(amount),
-          escapeCsv(txn.category),
-          escapeCsv(txn.note),
-          escapeCsv(txn.paymentMethod),
-          "",
-          "",
-          ""
-        ].join(",")
+          row.createdAt.toISOString(),
+          row.type,
+          exchange ? "DKK->VND" : row.currency,
+          exchange
+            ? row.fromAmountDkk! / 100
+            : row.amount! / (row.currency === "DKK" ? 100 : 1),
+          row.category,
+          row.note,
+          row.paymentMethod,
+          exchange
+            ? `${row.fromAmountDkk! / 100} DKK -> ${row.toAmountVnd} VND`
+            : "",
+          row.provider,
+          row.feeAmount
+            ? `${row.feeAmount / (row.feeCurrency === "VND" ? 1 : 100)} ${row.feeCurrency ?? "DKK"}`
+            : "",
+        ]
+          .map(escapeCsv)
+          .join(","),
       );
-      continue;
     }
-
-    const { exchange } = record;
-    const feeValue =
-      exchange.feeAmount && exchange.feeCurrency
-        ? `${exchange.feeCurrency === "DKK" ? exchange.feeAmount / 100 : exchange.feeAmount} ${exchange.feeCurrency}`
-        : "";
-    rows.push(
-      [
-        escapeCsv(exchange.createdAt.toISOString()),
-        "EXCHANGE",
-        "DKK->VND",
-        escapeCsv(exchange.fromAmountDkk / 100),
-        "",
-        "",
-        "",
-        escapeCsv(`${exchange.fromAmountDkk / 100} DKK -> ${exchange.toAmountVnd} VND`),
-        escapeCsv(exchange.provider),
-        escapeCsv(feeValue)
-      ].join(",")
-    );
+    return new NextResponse("\uFEFF" + rows.join("\r\n"), {
+      headers: {
+        "Content-Type": "text/csv; charset=utf-8",
+        "Cache-Control": "no-store",
+        "Content-Disposition": `attachment; filename="finance-export-${new Date().toISOString().slice(0, 10)}.csv"`,
+      },
+    });
+  } catch (error) {
+    if (error instanceof FinanceInputError)
+      return NextResponse.json({ error: error.message }, { status: 400 });
+    throw error;
   }
-
-  const header = new Headers();
-  header.set("Content-Type", "text/csv; charset=utf-8");
-  header.set(
-    "Content-Disposition",
-    `attachment; filename="finance-export-${new Date().toISOString().slice(0, 10)}.csv"`
-  );
-  return new NextResponse(rows.join("\n"), { headers: header });
 }
+
+export const GET = withApiSecurity(handleGET);

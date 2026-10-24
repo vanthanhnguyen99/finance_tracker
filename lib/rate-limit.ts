@@ -1,3 +1,4 @@
+import { isIP } from "node:net";
 type Bucket = {
   count: number;
   resetAt: number;
@@ -54,9 +55,11 @@ export function checkRateLimit(key: string, limit: number, windowMs: number) {
 }
 
 export function getClientIp(rawForwardedFor: string | null, fallback: string) {
-  // NextRequest does not expose the socket peer. Trust forwarding headers only
-  // when deployment explicitly restricts ingress to a proxy that overwrites them.
+  // Ingress must overwrite X-Real-IP and be the only path to the private app.
   if (process.env.TRUST_PROXY !== "true") return fallback;
-  const first = rawForwardedFor?.split(",")[0]?.trim();
-  return first && first.length > 0 ? first : fallback;
+  const value = rawForwardedFor?.trim();
+  return value && isIP(value) ? value : fallback;
+}
+export function getRequestClientIp(headers: Headers) {
+  return getClientIp(headers.get("x-real-ip"), "unknown");
 }

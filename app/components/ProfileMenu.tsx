@@ -1,8 +1,11 @@
 "use client";
 
+import { Dialog } from "./ui/Dialog";
 import { useState } from "react";
 import { usePathname, useRouter, useSearchParams } from "next/navigation";
 import { LogoutButton } from "./LogoutButton";
+import { useTheme } from "./ThemeProvider";
+import type { Appearance, Transparency } from "@/lib/theme";
 
 function getInitials(name: string) {
   const parts = name.trim().split(/\s+/).filter(Boolean);
@@ -22,6 +25,7 @@ export function ProfileMenu({
   const [isOpen, setIsOpen] = useState(false);
   const [isSaving, setIsSaving] = useState(false);
   const [error, setError] = useState("");
+  const theme = useTheme();
   const router = useRouter();
   const pathname = usePathname();
   const searchParams = useSearchParams();
@@ -46,8 +50,9 @@ export function ProfileMenu({
       if (pathname === "/") {
         const params = new URLSearchParams(searchParams.toString());
         params.delete("expenseCurrency");
-        params.set("refresh", String(Date.now()));
-        router.replace(`/?${params.toString()}`, { scroll: false });
+        params.delete("refresh");
+        if (params.toString() === searchParams.toString()) router.refresh();
+        else router.replace(`/?${params.toString()}`, { scroll: false });
       } else {
         router.refresh();
       }
@@ -62,29 +67,20 @@ export function ProfileMenu({
     <div className="relative">
       <button
         type="button"
-        className="inline-flex h-11 w-11 items-center justify-center rounded-full bg-primary-100 text-sm font-bold text-primary-700 transition active:bg-primary-200 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary-300"
+        className="inline-flex h-11 w-11 items-center justify-center rounded-full bg-slate-100 text-sm font-bold text-slate-700 transition active:bg-slate-200 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary-300"
         onClick={() => setIsOpen((current) => !current)}
         aria-label="Mở menu tài khoản"
-        aria-haspopup="menu"
+        aria-haspopup="dialog"
         aria-expanded={isOpen}
       >
         {getInitials(name)}
       </button>
 
       {isOpen ? (
-        <>
-          <button
-            type="button"
-            className="fixed inset-0 z-40 cursor-default"
-            onClick={() => setIsOpen(false)}
-            aria-label="Đóng menu tài khoản"
-          />
-          <div
-            role="menu"
-            className="absolute right-0 top-[52px] z-50 w-64 rounded-card border border-slate-200 bg-white p-2 shadow-sheet"
-          >
+        <Dialog open={isOpen} onClose={() => setIsOpen(false)} labelledBy="profile-menu-title">
+          <button type="button" className="icon-button float-right" aria-label="Đóng menu tài khoản" onClick={() => setIsOpen(false)}>×</button>
             <div className="px-3 py-2">
-              <p className="truncate text-sm font-semibold text-ink">{name}</p>
+              <h2 id="profile-menu-title" className="truncate text-lg font-semibold text-ink">{name}</h2>
               {email ? <p className="mt-0.5 truncate text-xs text-slate-500">{email}</p> : null}
             </div>
             <div className="my-1 border-t border-slate-100" />
@@ -99,7 +95,7 @@ export function ProfileMenu({
                       type="button"
                       onClick={() => setPrimaryCurrency(currency)}
                       disabled={isSaving}
-                      className={`min-h-10 rounded-control border px-3 text-sm font-semibold transition focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary-300 disabled:opacity-60 ${
+                      className={`min-h-11 rounded-control border px-3 text-sm font-semibold transition focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary-300 disabled:opacity-60 ${
                         active
                           ? "border-primary-200 bg-primary-50 text-primary-700"
                           : "border-slate-200 text-slate-600 active:bg-slate-50"
@@ -114,9 +110,28 @@ export function ProfileMenu({
               {error ? <p className="mt-2 text-xs text-danger-dark">{error}</p> : null}
             </div>
             <div className="my-1 border-t border-slate-100" />
+            <div className="grid gap-4 px-3 py-3">
+              <div className="form-label">
+                <label htmlFor="theme-appearance">Giao diện</label>
+                <select id="theme-appearance" className="select" value={theme.appearance} onChange={event => theme.updateTheme({ appearance: event.target.value as Appearance })}>
+                  <option value="system">Theo hệ thống</option>
+                  <option value="light">Sáng</option>
+                  <option value="dark">Tối</option>
+                </select>
+              </div>
+              <div className="form-label">
+                <label htmlFor="theme-transparency">Hiệu ứng trong suốt</label>
+                <select id="theme-transparency" aria-describedby="theme-transparency-help" className="select" value={theme.transparency} onChange={event => theme.updateTheme({ transparency: event.target.value as Transparency })}>
+                  <option value="system">Theo hệ thống</option>
+                  <option value="standard">Tiêu chuẩn</option>
+                  <option value="reduced">Giảm trong suốt</option>
+                </select>
+                <span id="theme-transparency-help" className="form-helper">Giảm trong suốt để nền điều hướng đục và dễ đọc hơn.</span>
+              </div>
+            </div>
+            <div className="my-1 border-t border-slate-100" />
             <LogoutButton className="w-full justify-start rounded-control px-3 [&>span]:!inline" />
-          </div>
-        </>
+        </Dialog>
       ) : null}
     </div>
   );

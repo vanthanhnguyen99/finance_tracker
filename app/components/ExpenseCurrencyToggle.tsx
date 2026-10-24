@@ -19,9 +19,9 @@ export function ExpenseCurrencyToggle({ active }: { active: "DKK" | "VND" }) {
           key={currency}
           type="button"
           onClick={() => setCurrency(currency)}
-          className={`min-h-8 rounded-md px-3 text-xs font-semibold uppercase transition focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary-300 ${
+          className={`min-h-11 rounded-md px-3 text-xs font-semibold uppercase transition focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary-300 ${
             active === currency
-              ? "bg-white text-primary-700 shadow-soft"
+              ? "bg-surface text-primary-700 shadow-soft"
               : "text-slate-500"
           }`}
           aria-pressed={active === currency}

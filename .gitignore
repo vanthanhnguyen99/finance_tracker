@@ -24,3 +24,9 @@ backups/
 
 # Local deployment/build metadata
 .vercel/
+
+# Browser test artifacts
+playwright-report/
+test-results/
+
+artifacts/liquid-glass/

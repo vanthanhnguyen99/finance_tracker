@@ -8,6 +8,8 @@ const securityHeaders = [
 ];
 
 const nextConfig = {
+  output: "standalone",
+  devIndicators: false,
   images: {
     unoptimized: true
   },
